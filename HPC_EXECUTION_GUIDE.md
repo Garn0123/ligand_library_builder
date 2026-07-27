@@ -12,12 +12,12 @@ The whole job is five scripts run as four dependency-chained SLURM jobs, followe
 by two serial labeling steps:
 
 ```
-make_shards.py  →  p1_collect.py  →  p2_assemble.py  →  p3_finalize.py
-   (plan, 1)        (collect, S)       (assemble, N)       (final, 1)
-                                                                │
+parallel/  make_shards.py  →  p1_collect.py  →  p2_assemble.py  →  p3_finalize.py
+              (plan, 1)         (collect, S)       (assemble, N)       (final, 1)
+                                                                          │
                                               chunks + manifest.tsv in OUT_DIR
-                                                                │
-                                          02_label.py  →  03_apply.py
+                                                                          │
+serial/                                   02_label.py  →  03_apply.py
                                           (decide ids)     (rewrite chunks)
 ```
 
@@ -28,12 +28,13 @@ each chunk a whole number of records, all chunks roughly equal in docking cost.
 
 ## 0. Before you start — preflight checklist
 
-Run these from a login node in the pipeline directory (the folder containing
-`submit.slurm`).
+Run these from a login node at the **repo root** — the folder that contains
+`serial/`, `parallel/`, and `tests/`. All paths below are relative to it, and the
+`$PWD/...` commands later assume you launch them from here.
 
 **1. Python 3.9+ is on the compute nodes.** Stdlib only, no pip installs needed.
-The scripts are launched with `python3 -u` by `submit.slurm` (unbuffered stderr
-so progress shows up live).
+The scripts are launched with `python3 -u` by `parallel/submit.slurm` (unbuffered
+stderr so progress shows up live).
 
 ```bash
 python3 --version        # need >= 3.9
@@ -41,7 +42,7 @@ python3 --version        # need >= 3.9
 
 If the cluster needs a module for a modern Python (e.g. `module load python`),
 load it in your shell **and** add the same `module load` line near the top of
-`submit.slurm` (after the shebang) so the compute nodes get it too.
+`parallel/submit.slurm` (after the shebang) so the compute nodes get it too.
 
 **2. `$SCRATCH` is set and has room.** Intermediates total roughly **1× the input
 library size**, freed incrementally during assembly. For a ~500 GB library,
@@ -61,17 +62,18 @@ ls -d /path/to/ZINC_sync/published/3D                              # confirm the
 ```
 
 **4. (Recommended) Dry-run the planner to validate discovery and size the job.**
-`make_shards.py` just walks the tree and stats file sizes — it's cheap and tells
-you the total library size, which you need to choose `BINS` (step 1). Run it into
-a throwaway work dir:
+`parallel/make_shards.py` just walks the tree and stats file sizes — it's cheap
+and tells you the total library size, which you need to choose `BINS` (step 1).
+Run it into a throwaway work dir:
 
 ```bash
-python3 make_shards.py -i /path/to/ZINC_sync/published/3D -o "$SCRATCH/db2_probe" -S 200
+python3 parallel/make_shards.py -i /path/to/ZINC_sync/published/3D -o "$SCRATCH/db2_probe" -S 200
 ```
 
 Read its summary: `found N files`, `total input: X GB`, and the shard-balance
 spread. If it finds 0 files, your `INPUT_DIR` or `--suffix` is wrong. You can
-delete `$SCRATCH/db2_probe` afterward; `submit.slurm` re-runs the planner itself.
+delete `$SCRATCH/db2_probe` afterward; `parallel/submit.slurm` re-runs the planner
+itself.
 
 ---
 
@@ -121,10 +123,10 @@ tree.
 
 ---
 
-## 2. Configure `submit.slurm`
+## 2. Configure `parallel/submit.slurm`
 
-Edit the config block at the top of `submit.slurm` (lines ~15–30). Everything you
-must change:
+Edit the config block at the top of `parallel/submit.slurm` (lines ~15–30).
+Everything you must change:
 
 ```bash
 INPUT_DIR=/path/to/ZINC_sync/published/3D   # the tree of .db2.gz files
@@ -144,7 +146,8 @@ COLLECT_TIME=04:00:00
 ASSEMBLE_TIME=00:30:00
 ```
 
-`PIPE` auto-detects the script directory — leave it. Do not point `WORK_DIR` at
+`PIPE` auto-detects its own directory (`parallel/`) and `SERIAL` resolves to the
+sibling `serial/` for the labeling step — leave both. Do not point `WORK_DIR` at
 `$HOME`.
 
 **Concurrency throttle (optional).** The collect submit line uses
@@ -158,7 +161,7 @@ good neighbor), lower the number after `%`, e.g. edit it to `%50` to run at most
 ## 3. Submit
 
 ```bash
-bash submit.slurm
+bash parallel/submit.slurm
 ```
 
 This submits four jobs, each waiting on the previous with `--dependency=afterok`,
@@ -175,7 +178,7 @@ final    : 1234570
 task fails, assembly does **not** start (this is deliberate — it prevents
 silently producing short chunks). See step 5 for recovery.
 
-Nothing runs on your login node; `bash submit.slurm` only submits and exits.
+Nothing runs on your login node; `bash parallel/submit.slurm` only submits and exits.
 
 ---
 
@@ -217,8 +220,9 @@ head $SCRATCH/db2chunks/manifest.tsv
 
 **Collect tasks are idempotent** — re-running a shard produces a byte-identical
 shard manifest — so recovery is just "rerun the failed shards, then rerun
-assemble and final." `submit.slurm` chains everything in one shot, so after a
-partial failure you resubmit the tail by hand.
+assemble and final." `parallel/submit.slurm` chains everything in one shot, so
+after a partial failure you resubmit the tail by hand. Run these from the repo
+root, so the `$PWD/parallel/...` paths resolve.
 
 **1. Find which collect tasks failed:**
 
@@ -236,7 +240,7 @@ out-of-time task (raise `COLLECT_TIME`), or a node/scratch hiccup.
 sbatch -A your_account -p standard --cpus-per-task=1 --mem=4G --time=04:00:00 \
   --job-name=db2collect_rerun --array=3,17,102 \
   -o "$SCRATCH/db2work/logs/collect_%a.out" -e "$SCRATCH/db2work/logs/collect_%a.err" \
-  --wrap "python3 -u $PWD/p1_collect.py -w '$SCRATCH/db2work' -s \$SLURM_ARRAY_TASK_ID \
+  --wrap "python3 -u $PWD/parallel/p1_collect.py -w '$SCRATCH/db2work' -s \$SLURM_ARRAY_TASK_ID \
           -N 170 --mode stride --weight count"
 ```
 
@@ -247,13 +251,13 @@ JOB_A=$(sbatch --parsable -A your_account -p standard --cpus-per-task=1 --mem=4G
   --time=00:30:00 --job-name=db2assemble --array=0-169 \
   --dependency=afterok:<COLLECT_RERUN_JOBID> \
   -o "$SCRATCH/db2work/logs/assemble_%a.out" -e "$SCRATCH/db2work/logs/assemble_%a.err" \
-  --wrap "python3 -u $PWD/p2_assemble.py -w '$SCRATCH/db2work' -b \$SLURM_ARRAY_TASK_ID \
+  --wrap "python3 -u $PWD/parallel/p2_assemble.py -w '$SCRATCH/db2work' -b \$SLURM_ARRAY_TASK_ID \
           -o '$SCRATCH/db2chunks'")
 
 sbatch -A your_account -p standard --cpus-per-task=1 --mem=8G --time=01:00:00 \
   --job-name=db2final --dependency=afterok:$JOB_A \
   -o "$SCRATCH/db2work/logs/final.out" -e "$SCRATCH/db2work/logs/final.err" \
-  --wrap "python3 -u $PWD/p3_finalize.py -w '$SCRATCH/db2work' -o '$SCRATCH/db2chunks'"
+  --wrap "python3 -u $PWD/parallel/p3_finalize.py -w '$SCRATCH/db2work' -o '$SCRATCH/db2chunks'"
 ```
 
 Replace `170`/`169`, account, partition, and paths with your values. Assembly
@@ -270,7 +274,7 @@ Labeling disambiguates molecule ids that legitimately repeat (protonation states
 tautomers, stereoisomers). It's a two-step, position-addressed rewrite and is the
 **same in both pipelines**. It runs after `OUT_DIR/manifest.tsv` exists.
 
-### 6a. Decide new ids — `02_label.py`
+### 6a. Decide new ids — `serial/02_label.py`
 
 For a large library, precompute the duplicate-id set on disk (cheap, streaming)
 and pass it in, rather than making `02` hold every unique id in memory:
@@ -286,7 +290,7 @@ node). Give the sort/label step real memory and time:
 ```bash
 sbatch -A your_account -p standard --cpus-per-task=1 --mem=8G --time=02:00:00 \
   --job-name=db2label -o $SCRATCH/db2work/logs/label.out -e $SCRATCH/db2work/logs/label.err \
-  --wrap "python3 -u $PWD/02_label.py -m $SCRATCH/db2chunks/manifest.tsv \
+  --wrap "python3 -u $PWD/serial/02_label.py -m $SCRATCH/db2chunks/manifest.tsv \
           -o $SCRATCH/db2work/labels.tsv --mode duplicates \
           --dup-ids $SCRATCH/db2work/dups.txt --max-id-len 40"
 ```
@@ -296,7 +300,7 @@ warns if any new id gets long enough to worry about the column-shift caveat
 (below). Default mode `duplicates` leaves unique molecules with their bare
 catalog id.
 
-### 6b. Apply the labels — `03_apply.py`
+### 6b. Apply the labels — `serial/03_apply.py`
 
 `03` locates each record by `(chunk, chunk_idx)` and, before rewriting, verifies
 the id at that position matches what `labels.tsv` expects. A mismatch (e.g. the
@@ -312,7 +316,7 @@ sbatch -A your_account -p standard --cpus-per-task=1 --mem=4G --time=01:00:00 \
   --job-name=db2apply --array=1-170 \
   -o $SCRATCH/db2work/logs/apply_%a.out -e $SCRATCH/db2work/logs/apply_%a.err \
   --wrap 'CH=$(printf "chunk_%05d.db2.gz" $SLURM_ARRAY_TASK_ID); \
-          python3 -u '"$PWD"'/03_apply.py -c '"$SCRATCH"'/db2chunks \
+          python3 -u '"$PWD"'/serial/03_apply.py -c '"$SCRATCH"'/db2chunks \
           -L '"$SCRATCH"'/db2work/labels.tsv -o '"$SCRATCH"'/db2chunks_labelled \
           --only $CH --copy-unedited'
 ```
@@ -369,13 +373,15 @@ line). The scripts report both and warn when they disagree.
 ## Quick reference — full run, start to finish
 
 ```bash
+# Run everything from the repo root (the dir holding serial/, parallel/, tests/).
+
 # 0. preflight
 python3 --version                                   # >= 3.9
 echo "$SCRATCH"; df -h "$SCRATCH"                    # scratch has >= input-size free
-python3 make_shards.py -i /path/to/3D -o "$SCRATCH/db2_probe" -S 200   # confirm file count + total GB
+python3 parallel/make_shards.py -i /path/to/3D -o "$SCRATCH/db2_probe" -S 200   # file count + total GB
 
-# 1-3. edit submit.slurm config block, then:
-bash submit.slurm
+# 1-3. edit parallel/submit.slurm config block, then:
+bash parallel/submit.slurm
 
 # 4. watch
 squeue -u $USER
@@ -384,8 +390,8 @@ cat     $SCRATCH/db2work/logs/final.out             # when done
 
 # 6. label
 tail -n +2 $SCRATCH/db2chunks/manifest.tsv | cut -f5 | sort | uniq -d > $SCRATCH/db2work/dups.txt
-sbatch ... 02_label.py  ... --dup-ids $SCRATCH/db2work/dups.txt        # see step 6a
-sbatch ... 03_apply.py  ... --array=1-BINS --only $CH --copy-unedited  # see step 6b
+sbatch ... serial/02_label.py ... --dup-ids $SCRATCH/db2work/dups.txt        # see step 6a
+sbatch ... serial/03_apply.py ... --array=1-BINS --only $CH --copy-unedited  # see step 6b
 
 # 7. verify (see step 7), and push ONE labeled chunk through docking first.
 ```

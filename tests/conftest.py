@@ -19,6 +19,20 @@ for _p in (str(PIPE_DIR), str(TESTS_DIR)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+# The stage scripts live under serial/ and parallel/; db2common.py stays at the
+# repo root. Callers pass a bare basename and we locate it.
+_SCRIPT_DIRS = ("serial", "parallel")
+
+
+def _resolve_script(name):
+    if "/" in name:                       # explicit path given
+        return PIPE_DIR / name
+    for sub in _SCRIPT_DIRS:
+        cand = PIPE_DIR / sub / name
+        if cand.exists():
+            return cand
+    return PIPE_DIR / name                 # fallback: repo root
+
 
 def _run_script(name, *args, check=True, cwd=None):
     """Run a pipeline script with the current interpreter.
@@ -27,7 +41,7 @@ def _run_script(name, *args, check=True, cwd=None):
     ``check=True`` (default) a nonzero exit raises AssertionError with the
     captured output; pass ``check=False`` to assert on a failure yourself.
     """
-    cmd = [sys.executable, "-u", str(PIPE_DIR / name)] + [str(a) for a in args]
+    cmd = [sys.executable, "-u", str(_resolve_script(name))] + [str(a) for a in args]
     res = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
     if check and res.returncode != 0:
         raise AssertionError(

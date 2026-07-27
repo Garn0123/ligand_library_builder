@@ -18,7 +18,7 @@ import glob
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root holds db2common.py
 from db2common import MANIFEST_HEADER
 
 

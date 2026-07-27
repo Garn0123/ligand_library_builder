@@ -15,7 +15,8 @@
 INPUT_DIR=/path/to/ZINC_sync/published/3D
 WORK_DIR=$SCRATCH/db2work           # intermediates; needs ~1x input size
 OUT_DIR=$SCRATCH/db2chunks          # finished chunks
-PIPE=$(cd "$(dirname "$0")" && pwd) # where these scripts live
+PIPE=$(cd "$(dirname "$0")" && pwd)         # parallel/ -- these scripts live here
+SERIAL=$(cd "$PIPE/../serial" && pwd)       # serial/  -- 02_label, 03_apply live here
 
 SHARDS=200                          # collect tasks (array width)
 BINS=170                            # finished chunks (~50k mols each for 8.5M)
@@ -75,8 +76,8 @@ When it finishes, chunks and manifest.tsv are in:
   $OUT_DIR
 
 Then label as usual (these are unchanged and still serial):
-  python3 $PIPE/02_label.py -m $OUT_DIR/manifest.tsv -o labels.tsv
-  python3 $PIPE/03_apply.py -c $OUT_DIR -L labels.tsv -o ${OUT_DIR}_labelled
+  python3 $SERIAL/02_label.py -m $OUT_DIR/manifest.tsv -o labels.tsv
+  python3 $SERIAL/03_apply.py -c $OUT_DIR -L labels.tsv -o ${OUT_DIR}_labelled
 
 If a few collect tasks fail, rerun just those:
   sbatch --array=3,17,102 ... p1_collect.py ...

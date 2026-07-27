@@ -21,7 +21,7 @@ import os
 import sys
 from collections import defaultdict
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root holds db2common.py
 from db2common import (iter_records, extract_id, relabel, open_gz_text,
                        read_tsv, LABELS_HEADER)
 

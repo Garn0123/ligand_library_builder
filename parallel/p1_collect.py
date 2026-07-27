@@ -23,7 +23,7 @@ import resource
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root holds db2common.py
 from db2common import (iter_records_bytes, extract_id_bytes, make_weight_fn_bytes,
                        is_gzip)
 

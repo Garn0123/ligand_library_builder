@@ -7,10 +7,10 @@ molecule ZINC 3D library, but works on anything from a handful of files up.
 
 There are two ways to run it:
 
-- **Serial pipeline** (`01`–`04`): simple, single-process, good up to a few
-  million molecules or for development and testing.
-- **Parallel pipeline** (`make_shards` + `p1`–`p3` + `submit.slurm`): a SLURM
-  job-array version of the same thing that scales to the full library.
+- **Serial pipeline** (`serial/`, stages `01`–`04`): simple, single-process,
+  good up to a few million molecules or for development and testing.
+- **Parallel pipeline** (`parallel/`: `make_shards` + `p1`–`p3` + `submit.slurm`):
+  a SLURM job-array version of the same thing that scales to the full library.
 
 Both produce the **same output format** — a directory of chunk files plus a
 `manifest.tsv` — and both feed the same labeling stages (`02`, `03`).
@@ -74,23 +74,28 @@ The slow parser (`iter_records`) splits on any line whose first character is
 
 ```
 db2pipe/
-  db2common.py        shared library: parsers, id extraction, relabeling,
-                      inode dedup, weight functions, progress reporting
-  # --- serial pipeline ---
-  01_chunk.py         walk tree -> fixed-size chunks + manifest
-  02_label.py         manifest -> labels.tsv (decide new ids; touches no data)
-  03_apply.py         apply labels.tsv to chunks (position-addressed rewrite)
-  04_rebalance.py     post-hoc: redistribute existing chunks to balance load
-  # --- parallel pipeline (SLURM) ---
-  make_shards.py      split input tree into size-balanced shard lists
-  p1_collect.py       [array] parse a shard, stride records into per-bin parts
-  p2_assemble.py      [array] concatenate a bin's parts into a finished chunk
-  p3_finalize.py      stitch per-shard manifests into one global manifest
-  submit.slurm        driver: chains all four phases with job dependencies
-  README.md           this file
+  db2common.py            shared library: parsers, id extraction, relabeling,
+                          inode dedup, weight functions, progress reporting
+  serial/                 standalone single-process pipeline
+    01_chunk.py           walk tree -> fixed-size chunks + manifest
+    02_label.py           manifest -> labels.tsv (decide new ids; touches no data)
+    03_apply.py           apply labels.tsv to chunks (position-addressed rewrite)
+    04_rebalance.py       post-hoc: redistribute existing chunks to balance load
+  parallel/               SLURM job-array pipeline (same output format)
+    make_shards.py        split input tree into size-balanced shard lists
+    p1_collect.py         [array] parse a shard, stride records into per-bin parts
+    p2_assemble.py        [array] concatenate a bin's parts into a finished chunk
+    p3_finalize.py        stitch per-shard manifests into one global manifest
+    submit.slurm          driver: chains all four phases with job dependencies
+  tests/                  pytest suite (see tests/README.md)
+  README.md               this file
+  HPC_EXECUTION_GUIDE.md  step-by-step SLURM execution guide
 ```
 
-`02` and `03` are shared by both pipelines and run serially in both.
+`serial/02_label.py` and `serial/03_apply.py` are shared by both pipelines and
+run serially in both — the parallel pipeline calls them after assembly. The
+shared library `db2common.py` sits at the repo root; every stage script imports
+it from there.
 
 ---
 
@@ -115,13 +120,13 @@ chunk→source summary).
 
 ```bash
 # 1. chunk + manifest
-python3 01_chunk.py -i /path/to/3D -o chunks -n 50000
+python3 serial/01_chunk.py -i /path/to/3D -o chunks -n 50000
 
 # 2. decide new ids for duplicates (reads text only, fast)
-python3 02_label.py -m chunks/manifest.tsv -o labels.tsv
+python3 serial/02_label.py -m chunks/manifest.tsv -o labels.tsv
 
 # 3. apply the labels (parallelizable per chunk with --only)
-python3 03_apply.py -c chunks -L labels.tsv -o chunks_labelled
+python3 serial/03_apply.py -c chunks -L labels.tsv -o chunks_labelled
 ```
 
 ### 01_chunk.py — chunk and manifest
@@ -156,7 +161,7 @@ whose id changes**. Modes:
   large libraries precompute the dup set on disk and pass `--dup-ids`:
   ```bash
   tail -n +2 chunks/manifest.tsv | cut -f5 | sort | uniq -d > dups.txt
-  python3 02_label.py -m chunks/manifest.tsv -o labels.tsv --dup-ids dups.txt
+  python3 serial/02_label.py -m chunks/manifest.tsv -o labels.tsv --dup-ids dups.txt
   ```
 - `occurrence` — every id gets an nth-seen suffix (`_1`, `_2`, …). Holds every
   unique id in memory.
@@ -187,7 +192,7 @@ the source tree. Use this if you chunked before adding balancing.
 just permutes whole 50k blocks.)
 
 ```bash
-python3 04_rebalance.py -c chunks -m chunks/manifest.tsv -o rebalanced -N 10 --mode stride
+python3 serial/04_rebalance.py -c chunks -m chunks/manifest.tsv -o rebalanced -N 10 --mode stride
 ```
 
 - `--mode stride` — record *i* → bin *i mod N*; systematic sampling across the
@@ -206,8 +211,8 @@ stale afterward — re-run `02` against the new manifest.**
 ## Parallel pipeline (SLURM)
 
 Same result as the serial pipeline, scaled out. Edit the config block at the top
-of `submit.slurm` and run `bash submit.slurm`. It submits four dependency-chained
-jobs:
+of `parallel/submit.slurm` and run `bash parallel/submit.slurm`. It submits four
+dependency-chained jobs:
 
 | Phase | Script | Array | Work |
 |------|--------|-------|------|
@@ -308,13 +313,15 @@ zcat chunks/*.db2.gz | grep -v '^M' | md5sum
 #    (walk each chunk, compare extract_id at each index to the manifest row)
 ```
 
-There is **no automated test suite yet** — verification so far has been ad-hoc
-shell checks like the above plus synthetic-data generators. Building a proper
-`tests/` directory with a small committed fixture tree is the highest-value next
-task (see below). During development, test data was generated with small Python
-snippets that emit `M…E` records with controllable atom/conformer counts and
-deliberately lopsided per-tranche populations to reproduce the size-imbalance
-problem.
+An automated **pytest suite lives in `tests/`** (`python3 -m pytest` from the
+repo root; needs only `pip install -r requirements-dev.txt`). It covers the
+invariants above — record-boundary integrity, id-multiset preservation,
+manifest-position correctness, stale-label rejection, the parallel global-index
+arithmetic, and the truncated/non-gzip/duplicate-path edge cases — using
+synthetic `M…E` records generated on the fly (`tests/db2gen.py`) with
+controllable atom/conformer counts and deliberately lopsided per-tranche
+populations. The ad-hoc shell checks above remain a useful final sanity pass on
+real data. See `tests/README.md` for the layout.
 
 ---
 
@@ -352,10 +359,12 @@ Unclaimed work, roughly in priority order:
 
 1. **Confirm the `E`-line assumption** against real ZINC db2 files, and if it can
    be violated, make `iter_records_bytes` robust to it.
-2. **Add a real test suite** (`tests/` + a tiny committed fixture tree) covering:
-   record-boundary integrity, id-multiset preservation, manifest-position
-   correctness, stale-label rejection, the parallel global-index arithmetic, and
-   the truncated/non-gzip/duplicate-path edge cases.
+2. **Extend the test suite.** `tests/` now covers parser equivalence,
+   id-multiset preservation, manifest-position correctness, stale-label
+   rejection, the parallel global-index arithmetic, and the
+   truncated/non-gzip/duplicate-path edge cases. Still uncovered:
+   `04_rebalance.py`, and running the invariants against a real ZINC fixture
+   rather than only synthetic records.
 3. **Switch the serial `01`–`04` to the bytes parser** for the ~3× speedup, once
    (1) is settled.
 4. **Verify the column-shift question** for the specific db2 reader in use;

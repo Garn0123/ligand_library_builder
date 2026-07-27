@@ -19,7 +19,7 @@ import os
 import random
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root holds db2common.py
 from db2common import (find_inputs, dedupe_by_inode, iter_records, extract_id,
                        open_gz_text, is_gzip, Progress, make_weight_fn,
                        MANIFEST_HEADER)

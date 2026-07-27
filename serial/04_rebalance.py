@@ -28,7 +28,7 @@ import os
 import resource
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root holds db2common.py
 from db2common import (iter_records, extract_id, open_gz_text, read_tsv,
                        make_weight_fn, Progress, MANIFEST_HEADER)
 
