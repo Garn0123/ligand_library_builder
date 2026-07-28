@@ -82,6 +82,7 @@ db2pipe/
     03_apply.py           apply labels.tsv to chunks (position-addressed rewrite)
     04_rebalance.py       post-hoc: redistribute existing chunks to balance load
   parallel/               SLURM job-array pipeline (same output format)
+    check_inputs.py       preflight: scan the tree for corrupt/truncated files
     make_shards.py        split input tree into size-balanced shard lists
     p1_collect.py         [array] parse a shard, stride records into per-bin parts
     p2_assemble.py        [array] concatenate a bin's parts into a finished chunk
@@ -343,10 +344,25 @@ real data. See `tests/README.md` for the layout.
 - **Duplicate *files*** (symlinks/hardlinks) are deduped by inode by default;
   duplicate **content** in two distinct files is not detected. Duplicate **ids**
   are expected and preserved, not an error.
-- **Truncated / non-gzip inputs** are detected: truncated records and unreadable
-  files cause a nonzero exit with a list; files that carry `.gz` but aren't
-  gzipped are read as plain text and reported (the `.gz` extension is not
-  trusted — content is sniffed for the `1f 8b` magic bytes).
+- **Truncated / corrupt / non-gzip inputs** are detected: truncated records and
+  unreadable files cause a nonzero exit with a list; files that carry `.gz` but
+  aren't gzipped are read as plain text and reported (the `.gz` extension is not
+  trusted — content is sniffed for the `1f 8b` magic bytes). A file with a valid
+  gzip header but a **damaged deflate body** (a partial download / bad transfer)
+  raises `zlib.error` mid-stream — which is *not* an `OSError` — so the readers
+  catch it explicitly; a corrupt file is named and the stage fails cleanly
+  instead of crashing with a traceback. To find every bad file in one pass
+  before submitting, run the preflight scanner and split the tree:
+  ```bash
+  python3 parallel/check_inputs.py -i /path/to/3D \
+      --good-list good.txt --bad-list bad.txt
+  # repair/re-fetch the bad ones, or just run over the clean set:
+  python3 parallel/make_shards.py --file-list good.txt -o work -S 200
+  ```
+  To finish an already-planned run over a library with a few known-bad files
+  without re-planning, rerun just the affected collect shards with
+  `p1_collect.py --skip-corrupt`: it keeps whatever reads cleanly, drops the
+  damaged files (still listing them), and exits 0 so assembly can proceed.
 - **File-descriptor limits.** Rebalance and collect open N/bins gzip writers at
   once; they raise `RLIMIT_NOFILE` where the hard limit allows and otherwise
   fail fast. For thousands of bins, raise `ulimit -n` or reduce N.

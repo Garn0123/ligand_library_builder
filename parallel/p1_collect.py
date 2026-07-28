@@ -22,6 +22,7 @@ import os
 import resource
 import sys
 import time
+import zlib
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root holds db2common.py
 from db2common import (iter_records_bytes, extract_id_bytes, make_weight_fn_bytes,
@@ -54,6 +55,12 @@ def main():
     ap.add_argument("-l", "--compresslevel", type=int, default=1,
                     help="gzip level for parts. These are intermediates that "
                          "get concatenated, so 1 is usually right (default: 1)")
+    ap.add_argument("--skip-corrupt", action="store_true",
+                    help="continue past corrupt/truncated input files instead of "
+                         "failing the task: keep whatever reads cleanly, drop the "
+                         "rest, and exit 0 so assembly can proceed. The dropped "
+                         "files are still listed. Use to finish a run over a "
+                         "library with a few known-bad files.")
     ap.add_argument("--progress-interval", type=float, default=60.0)
     args = ap.parse_args()
 
@@ -102,6 +109,7 @@ def main():
 
     seq = 0
     truncated = []
+    corrupt = []
     no_id = 0
     start = time.time()
     last = start
@@ -132,7 +140,11 @@ def main():
                     if args.mode == "greedy":
                         heapq.heappush(heap, (weights[b], b))
                     seq += 1
-        except (OSError, EOFError) as exc:
+        except (OSError, EOFError, zlib.error) as exc:
+            # zlib.error is NOT an OSError: a .db2.gz with a valid header but a
+            # damaged deflate body (partial download / bad transfer) raises it
+            # deep in gzip.read and would otherwise crash the whole task.
+            corrupt.append((path, str(exc)))
             sys.stderr.write("  UNREADABLE {}: {}\n".format(path, exc))
             continue
 
@@ -162,7 +174,20 @@ def main():
         sys.stderr.write("  WARNING: {} truncated file(s):\n".format(len(truncated)))
         for p in truncated[:10]:
             sys.stderr.write("    {}\n".format(p))
-        sys.exit(1)
+    if corrupt:
+        sys.stderr.write("  {}: {} corrupt/unreadable file(s) (bad gzip data):\n".format(
+            "WARNING" if args.skip_corrupt else "ERROR", len(corrupt)))
+        for p, e in corrupt[:10]:
+            sys.stderr.write("    {}: {}\n".format(p, e))
+    if truncated or corrupt:
+        n = len(truncated) + len(corrupt)
+        if args.skip_corrupt:
+            sys.stderr.write("  --skip-corrupt: kept what read cleanly and dropped "
+                             "the {} damaged file(s) above; exiting 0.\n".format(n))
+        else:
+            sys.stderr.write("  Repair or exclude these, then resubmit this shard "
+                             "(or rerun with --skip-corrupt to drop them).\n")
+            sys.exit(1)
 
 
 if __name__ == "__main__":

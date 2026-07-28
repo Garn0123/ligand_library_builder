@@ -26,7 +26,8 @@ python3 -m pytest tests/test_parallel.py    # one file
 | `test_pipelines.py` | serial `01` and the parallel pipeline agree on the id-multiset; every chunk is whole records |
 | `test_labeling.py` | `02`/`03` duplicate suffixing; stale-label rejection aborts without corrupting data |
 | `test_units.py` | `db2common` pure functions: id extraction, relabel, weights, dedup, gzip sniff, tsv validation |
-| `test_edge_cases.py` | truncated input, plaintext-with-`.gz`-name, hardlink dedup, empty shard |
+| `test_edge_cases.py` | truncated input, corrupt gzip body, plaintext-with-`.gz`-name, hardlink dedup, empty shard |
+| `test_check_inputs.py` | the preflight scanner: OK/CORRUPT/TRUNCATED/NOT_GZIP classification, good/bad list output |
 
 ## Notes
 

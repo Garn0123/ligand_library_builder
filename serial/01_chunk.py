@@ -18,6 +18,7 @@ import argparse
 import os
 import random
 import sys
+import zlib
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root holds db2common.py
 from db2common import (find_inputs, dedupe_by_inode, iter_records, extract_id,
@@ -198,7 +199,9 @@ def main():
                     total += 1
                     if total % 10000 == 0:
                         prog.tick(n - 1, total, done_bytes=done_bytes)
-        except (OSError, EOFError) as exc:
+        except (OSError, EOFError, zlib.error) as exc:
+            # zlib.error (bad deflate body) is not an OSError; catch it too so a
+            # corrupt .db2.gz is reported, not an uncaught traceback.
             bad_files.append((path, str(exc)))
             continue
 

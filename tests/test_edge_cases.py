@@ -65,6 +65,63 @@ def test_hardlink_duplicate_is_deduped(tmp_path, run_script):
     assert sorted(all_ids) == ["ZINC00000001", "ZINC00000002"]
 
 
+def _big_records(n):
+    return db2gen.records_text([("ZINC{:08d}".format(i), 2) for i in range(n)])
+
+
+def test_corrupt_gzip_body_reported_by_01_chunk(tmp_path, run_script):
+    # A .db2.gz with a valid header but damaged deflate body raises zlib.error
+    # deep in gzip.read -- which is NOT an OSError. The reader must catch it,
+    # name the file, and exit nonzero rather than crash with a traceback.
+    src = tmp_path / "src"
+    db2gen.write_gz(os.path.join(str(src), "good.db2.gz"),
+                    db2gen.records_text([("ZINC00000001", 2)]))
+    db2gen.write_corrupt_gz(os.path.join(str(src), "bad.db2.gz"), _big_records(50))
+
+    out = tmp_path / "out"
+    res = run_script("01_chunk.py", "-i", src, "-o", out,
+                     "--progress-interval", 0, check=False)
+
+    assert res.returncode != 0
+    assert "bad.db2.gz" in res.stderr
+    assert "Traceback" not in res.stderr        # handled cleanly, not crashed
+
+
+def test_corrupt_gzip_body_reported_by_p1_collect(tmp_path, run_script):
+    # The exact failure path from the field: p1_collect on a corrupt shard file.
+    src = tmp_path / "src"
+    db2gen.write_corrupt_gz(os.path.join(str(src), "bad.db2.gz"), _big_records(50))
+
+    work = tmp_path / "work"
+    run_script("make_shards.py", "-i", src, "-o", work, "-S", 1)
+    res = run_script("p1_collect.py", "-w", work, "-s", 0, "-N", 2, check=False)
+
+    assert res.returncode != 0
+    assert "bad.db2.gz" in res.stderr
+    assert "corrupt" in res.stderr.lower()
+    assert "Traceback" not in res.stderr
+
+
+def test_p1_collect_skip_corrupt_continues(tmp_path, run_script):
+    # With --skip-corrupt, a corrupt file is reported but does NOT fail the
+    # task: the good file's records are kept and the shard exits 0 so assembly
+    # can proceed. This is the "finish over a library with known-bad files" path.
+    src = tmp_path / "src"
+    db2gen.write_gz(os.path.join(str(src), "aaa_good.db2.gz"),
+                    db2gen.records_text([("ZINC00000001", 2), ("ZINC00000002", 2)]))
+    db2gen.write_corrupt_gz(os.path.join(str(src), "zzz_bad.db2.gz"), _big_records(50))
+
+    work = tmp_path / "work"
+    run_script("make_shards.py", "-i", src, "-o", work, "-S", 1)
+    res = run_script("p1_collect.py", "-w", work, "-s", 0, "-N", 2,
+                     "--skip-corrupt")               # check=True -> must exit 0
+
+    assert "zzz_bad.db2.gz" in res.stderr            # still listed for the record
+    counts = (work / "counts" / "shard_00000.tsv").read_text()
+    kept = sum(int(line.split("\t")[1]) for line in counts.strip().splitlines())
+    assert kept >= 2                                 # the good file's molecules
+
+
 def test_empty_shard_still_emits_bookkeeping(tmp_path, run_script):
     src = tmp_path / "src"
     db2gen.build_tree(str(src), {"a.db2.gz": [("ZINC00000001", 1)]})  # one file

@@ -13,6 +13,7 @@ build their own hand-crafted records.
 """
 
 import gzip
+import io
 import os
 from collections import Counter
 
@@ -59,6 +60,25 @@ def write_plain(path, text):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as fh:
         fh.write(text)
+
+
+def write_corrupt_gz(path, text):
+    """Write a gzip file with a valid header but a corrupted deflate body.
+
+    Reading it raises ``zlib.error`` partway through, reproducing a damaged
+    download/transfer (the 10-byte gzip header stays intact, so ``is_gzip``
+    still reports True and gzip.open proceeds into the bad data). ``text`` must
+    be long enough that the compressed body exceeds the header.
+    """
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    buf = io.BytesIO()
+    with gzip.GzipFile(fileobj=buf, mode="wb", mtime=0) as fh:
+        fh.write(text.encode())
+    data = bytearray(buf.getvalue())
+    for i in range(12, min(len(data) - 8, 48)):   # corrupt early deflate bytes
+        data[i] ^= 0xFF
+    with open(path, "wb") as fh:
+        fh.write(bytes(data))
 
 
 def build_tree(root, files):

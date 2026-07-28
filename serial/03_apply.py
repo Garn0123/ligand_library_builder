@@ -19,6 +19,7 @@ One chunk at a time, for a job array:
 import argparse
 import os
 import sys
+import zlib
 from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root holds db2common.py
@@ -103,7 +104,7 @@ def main():
         edits = by_chunk.get(name, {})
         try:
             recs, applied, mism = process_chunk(src, tmp, edits, args.compresslevel)
-        except (OSError, EOFError) as exc:
+        except (OSError, EOFError, zlib.error) as exc:
             if os.path.exists(tmp):
                 os.unlink(tmp)
             sys.exit("failed reading {}: {}".format(src, exc))

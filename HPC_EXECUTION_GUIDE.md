@@ -75,6 +75,24 @@ spread. If it finds 0 files, your `INPUT_DIR` or `--suffix` is wrong. You can
 delete `$SCRATCH/db2_probe` afterward; `parallel/submit.slurm` re-runs the planner
 itself.
 
+**5. (Recommended for a fresh sync) Scan for corrupt inputs.** The planner only
+stats file sizes — it cannot see a `.db2.gz` with a valid header but a damaged
+body (a partial download / interrupted `rsync`). Such a file raises `zlib.error`
+mid-stream; the collect stage now names it and fails cleanly rather than
+crashing, but you would still discover them one failed shard at a time. Catalog
+them all up front instead:
+
+```bash
+python3 parallel/check_inputs.py -i "$INPUT_DIR" -j 16 \
+    --good-list "$SCRATCH/good.txt" --bad-list "$SCRATCH/bad.txt"
+```
+
+A full scan decompresses every file, so it costs roughly one collect pass — use
+`-j` to spread it across cores, or run it as a SLURM job. Exit is nonzero if any
+file is CORRUPT or TRUNCATED. Then either re-fetch the files in `bad.txt`, or run
+the whole pipeline over just the clean set by passing `--file-list good.txt` to
+`make_shards.py` (see step 5 recovery below).
+
 ---
 
 ## 1. Choose your parameters
@@ -230,8 +248,44 @@ root, so the `$PWD/parallel/...` paths resolve.
 sacct -j <COLLECT_JOBID> --format=JobID,State,ExitCode,Elapsed | grep -v COMPLETED
 ```
 
-Common causes: a truncated input file (the task lists it and exits 1), an
-out-of-time task (raise `COLLECT_TIME`), or a node/scratch hiccup.
+Common causes: a **corrupt or truncated input file** (the task names it and exits
+1 — look for `ERROR: ... corrupt/unreadable file(s)` or `truncated file(s)` in the
+`.err` log), an out-of-time task (raise `COLLECT_TIME`), or a node/scratch hiccup.
+
+**Corrupt inputs** (`zlib.error: ... invalid block type`) mean a damaged
+`.db2.gz`. You have three ways forward, cheapest first:
+
+- **Already know which files are bad and want to move on?** You don't need to
+  scan or re-plan. The failed collect array-task IDs *are* the shard numbers, and
+  every successful shard's parts are already on disk (assembly is blocked by
+  `afterok`, so nothing was assembled or deleted). Just rerun those few shards
+  with `--skip-corrupt`, which keeps whatever reads cleanly, drops the damaged
+  files (still listing them), and exits 0 so assembly can proceed:
+  ```bash
+  sbatch -A your_account -p standard --cpus-per-task=1 --mem=4G --time=04:00:00 \
+    --array=28,41,102 \
+    -o "$SCRATCH/db2work/logs/collect_%a.out" -e "$SCRATCH/db2work/logs/collect_%a.err" \
+    --wrap "python3 -u $PWD/parallel/p1_collect.py -w '$SCRATCH/db2work' \
+            -s \$SLURM_ARRAY_TASK_ID -N 170 --mode stride --weight count --skip-corrupt"
+  ```
+  Then run assemble + final (step 3 below). This omits those files' molecules —
+  fine for a handful out of millions; note it if completeness matters.
+
+- **Want a complete library?** Re-fetch the damaged files to their same paths,
+  then rerun just the failed shards *without* `--skip-corrupt`.
+
+- **Don't know which files are bad, or want to catalog them all?** Scan and split
+  the tree, then re-plan over the clean set. Re-planning renumbers shards, so this
+  means rerunning the whole collect array:
+  ```bash
+  python3 parallel/check_inputs.py -i "$INPUT_DIR" -j 16 \
+      --good-list "$SCRATCH/good.txt" --bad-list "$SCRATCH/bad.txt"
+  python3 parallel/make_shards.py --file-list "$SCRATCH/good.txt" \
+      -o "$SCRATCH/db2work" -S 200
+  ```
+
+If instead the input tree is intact and only a few shards died on a transient
+error (out-of-time, node hiccup), rerun just those unchanged:
 
 **2. Rerun only the failed shards** (say tasks 3, 17, 102). Reuse the exact same
 `-w`, `-N`, `--mode`, `--weight` you configured:
