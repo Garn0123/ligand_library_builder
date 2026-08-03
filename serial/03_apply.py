@@ -24,7 +24,7 @@ from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root holds db2common.py
 from db2common import (iter_records, extract_id, relabel, open_gz_text,
-                       read_tsv, LABELS_HEADER)
+                       read_tsv, id_match, LABELS_HEADER)
 
 
 def load_labels(path, only=None):
@@ -52,10 +52,18 @@ def process_chunk(src, dst, edits, compresslevel):
             if edit is not None:
                 orig, new = edit
                 found = extract_id(lines)
-                if found != orig:
+                if not id_match(found, orig):
                     mismatches.append((records, orig, found))
                 else:
-                    lines = relabel(lines, orig, new)
+                    # Relabel the id that is actually in the record. For ZINC22
+                    # the header carries a truncated form (a suffix of `orig`),
+                    # so rewrite `found` -> found + the same suffix rather than
+                    # `orig` -> `new` (which wouldn't be found in the record).
+                    suffix = new[len(orig):] if new.startswith(orig) else None
+                    if suffix is not None and found != orig:
+                        lines = relabel(lines, found, found + suffix)
+                    else:
+                        lines = relabel(lines, orig, new)
                     applied += 1
             fout.writelines(lines)
             records += 1

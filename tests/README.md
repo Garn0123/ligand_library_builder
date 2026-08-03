@@ -28,6 +28,8 @@ python3 -m pytest tests/test_parallel.py    # one file
 | `test_units.py` | `db2common` pure functions: id extraction, relabel, weights, dedup, gzip sniff, tsv validation |
 | `test_edge_cases.py` | truncated input, corrupt gzip body, plaintext-with-`.gz`-name, hardlink dedup, empty shard |
 | `test_check_inputs.py` | the preflight scanner: OK/CORRUPT/TRUNCATED/NOT_GZIP classification, good/bad list output |
+| `test_autosize.py` | `make_shards --target-per-bin` estimating the count into `bins.txt`; `p1_collect` reading it when `-N` is omitted |
+| `test_zinc22.py` | reading `.db2` members from `.db2.tgz` archives (`iter_sources`); the truncated ZINC22 header id and `id_from_name`/`id_match`; the parallel pipeline end-to-end over a tarball; `03` relabel under truncation |
 
 ## Notes
 

@@ -4,11 +4,12 @@
 #
 #   bash submit.slurm
 #
-# Four jobs, chained by dependency:
-#   plan     1 task    walk the tree, build size-balanced shard lists
-#   collect  S tasks   parse shards, stride records into bin parts   <-- the work
-#   assemble N tasks   concatenate parts into chunks (pure byte copy)
-#   final    1 task    stitch the global manifest
+# The plan step runs up front (via srun, blocking) so the finished-chunk
+# count is known before the arrays are sized; then three jobs are chained:
+#   plan     now      walk the tree, build shard lists, size BINS from a sample
+#   collect  S tasks  parse shards, stride records into bin parts   <-- the work
+#   assemble N tasks  concatenate parts into chunks (pure byte copy)
+#   final    1 task   stitch the global manifest
 #
 # EDIT THESE:
 # =====================================================================
@@ -19,7 +20,9 @@ PIPE=$(cd "$(dirname "$0")" && pwd)         # parallel/ -- these scripts live he
 SERIAL=$(cd "$PIPE/../serial" && pwd)       # serial/  -- 02_label, 03_apply live here
 
 SHARDS=200                          # collect tasks (array width)
-BINS=170                            # finished chunks (~50k mols each for 8.5M)
+TARGET_PER_BIN=50000                # target molecules per finished chunk
+BINS=                               # leave EMPTY to auto-size from TARGET_PER_BIN;
+                                    # or set an explicit count to skip the estimate
 MODE=stride                         # stride | greedy
 WEIGHT=count                        # count | bytes | lines:C  (greedy only)
 
@@ -27,6 +30,7 @@ ACCOUNT=your_account
 PARTITION=standard
 CPUS=1                              # each task is single-threaded
 MEM=4G
+PLAN_TIME=01:00:00
 COLLECT_TIME=04:00:00
 ASSEMBLE_TIME=00:30:00
 
@@ -36,15 +40,26 @@ mkdir -p "$WORK_DIR" "$OUT_DIR" "$WORK_DIR/logs"
 
 SB="sbatch --parsable -A $ACCOUNT -p $PARTITION --cpus-per-task=$CPUS --mem=$MEM"
 
-# ---- plan -----------------------------------------------------------
-JOB_PLAN=$($SB --job-name=db2plan --time=01:00:00 \
-  -o "$WORK_DIR/logs/plan.out" -e "$WORK_DIR/logs/plan.err" \
-  --wrap "python3 -u $PIPE/make_shards.py -i '$INPUT_DIR' -o '$WORK_DIR' -S $SHARDS")
-echo "plan     : $JOB_PLAN"
+# ---- plan (runs now; BINS must be known before the arrays are sized) -
+# srun runs the walk (+ sample, when auto-sizing) on a compute node and
+# blocks until it finishes. No srun on your cluster? Run make_shards
+# yourself, set BINS above, and delete this block.
+if [ -n "$BINS" ]; then
+  srun -A "$ACCOUNT" -p "$PARTITION" --cpus-per-task="$CPUS" --mem=8G \
+    --time="$PLAN_TIME" -o "$WORK_DIR/logs/plan.out" -e "$WORK_DIR/logs/plan.err" \
+    python3 -u "$PIPE/make_shards.py" -i "$INPUT_DIR" -o "$WORK_DIR" -S "$SHARDS"
+else
+  srun -A "$ACCOUNT" -p "$PARTITION" --cpus-per-task="$CPUS" --mem=8G \
+    --time="$PLAN_TIME" -o "$WORK_DIR/logs/plan.out" -e "$WORK_DIR/logs/plan.err" \
+    python3 -u "$PIPE/make_shards.py" -i "$INPUT_DIR" -o "$WORK_DIR" -S "$SHARDS" \
+    --target-per-bin "$TARGET_PER_BIN"
+  BINS=$(cat "$WORK_DIR/bins.txt")
+fi
+echo "plan     : done, BINS=$BINS  (~$TARGET_PER_BIN mol/chunk)"
 
 # ---- collect (the expensive phase) ----------------------------------
 JOB_COLLECT=$($SB --job-name=db2collect --time=$COLLECT_TIME \
-  --array=0-$((SHARDS-1))%$SHARDS --dependency=afterok:$JOB_PLAN \
+  --array=0-$((SHARDS-1))%$SHARDS \
   -o "$WORK_DIR/logs/collect_%a.out" -e "$WORK_DIR/logs/collect_%a.err" \
   --wrap "python3 -u $PIPE/p1_collect.py -w '$WORK_DIR' -s \$SLURM_ARRAY_TASK_ID \
           -N $BINS --mode $MODE --weight $WEIGHT")

@@ -15,6 +15,7 @@ build their own hand-crafted records.
 import gzip
 import io
 import os
+import tarfile
 from collections import Counter
 
 
@@ -93,6 +94,48 @@ def build_tree(root, files):
         for zid, _nc in specs:
             ids[zid] += 1
     return ids
+
+
+def make_zinc22_record(short_id="NC550000002ttm.0", n_conformers=2, n_atoms=3):
+    """A ZINC22-style record whose header carries the (already left-truncated)
+    id as the first token of the first M line, e.g. 'NC550000002ttm.0'.
+    """
+    lines = ["M {}      fake  {}  {}     23      9      3\n".format(
+        short_id, n_atoms, n_atoms - 1)]
+    lines.append("M   +1.0000    -43.470     -0.460    -43.930   112.700\n")
+    lines.append("M fake\n")
+    for i in range(n_atoms):
+        lines.append("A {} C 0.0 0.0 {}\n".format(i, i))
+    for i in range(n_conformers):
+        lines.append("C {} 1.0\n".format(i))
+    lines.append("E\n")
+    return "".join(lines)
+
+
+def truncate_zinc_id(full_id):
+    """Left-truncate 'ZINC...'+conformer to 16 chars, mirroring the db2 writer
+    (e.g. 'ZINC550000002ttm.0' -> 'NC550000002ttm.0')."""
+    return full_id[-16:] if len(full_id) > 16 else full_id
+
+
+def write_db2_tgz(path, members):
+    """Write a `.db2.tgz`. `members` maps member-name -> record text.
+
+    A member name ending in `.gz` is gzip-compressed inside the tar; otherwise
+    it is stored as a bare `.db2`. Nothing is written to disk uncompressed.
+    """
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with tarfile.open(path, "w:gz") as tf:
+        for name, text in members.items():
+            data = text.encode()
+            if name.endswith(".gz"):
+                buf = io.BytesIO()
+                with gzip.GzipFile(fileobj=buf, mode="wb", mtime=0) as gz:
+                    gz.write(data)
+                data = buf.getvalue()
+            info = tarfile.TarInfo(name=name)
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
 
 
 def chunk_ids(path):

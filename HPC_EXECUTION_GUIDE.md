@@ -1,12 +1,16 @@
 # db2pipe — HPC Execution Guide (SLURM)
 
-Exact, copy-pasteable steps to compile a large tree of ZINC `.db2.gz` files into
+Exact, copy-pasteable steps to compile a large tree of ZINC db2 records into
 fixed-size, load-balanced chunks on a SLURM cluster, then label them for docking.
+Inputs may be old bare `.db2.gz` tranche files or new **ZINC22 `.db2.tgz`
+archives** (thousands of `.db2` members each) — the parallel pipeline reads
+archives in place, member by member, and never extracts them. Everything below
+works the same for either; where the archive case differs it is called out.
 
 This guide covers the **parallel (SLURM) pipeline**. For the single-process path
-(`01`–`04`), see `README.md`. Read the "db2 record model" and "Known caveats"
-sections of `README.md` once before your first production run — this guide
-assumes them.
+(`01`–`04`, which reads bare `.db2.gz` only), see `README.md`. Read the "db2
+record model", "ZINC22 tarballs", and "Known caveats" sections of `README.md`
+once before your first production run — this guide assumes them.
 
 The whole job is five scripts run as four dependency-chained SLURM jobs, followed
 by two serial labeling steps:
@@ -67,13 +71,14 @@ and tells you the total library size, which you need to choose `BINS` (step 1).
 Run it into a throwaway work dir:
 
 ```bash
-python3 parallel/make_shards.py -i /path/to/ZINC_sync/published/3D -o "$SCRATCH/db2_probe" -S 200
+python3 parallel/make_shards.py -i /path/to/ZINC_sync/published/3D \
+    -o "$SCRATCH/db2_probe" -S 200 --target-per-bin 50000
 ```
 
-Read its summary: `found N files`, `total input: X GB`, and the shard-balance
-spread. If it finds 0 files, your `INPUT_DIR` or `--suffix` is wrong. You can
-delete `$SCRATCH/db2_probe` afterward; `parallel/submit.slurm` re-runs the planner
-itself.
+Read its summary: `found N files`, `total input: X GB`, the shard-balance spread,
+and the **estimated molecule count and derived `BINS`** (from `--target-per-bin`).
+If it finds 0 files, your `INPUT_DIR` or `--suffix` is wrong. You can delete
+`$SCRATCH/db2_probe` afterward; `parallel/submit.slurm` re-runs the planner itself.
 
 **5. (Recommended for a fresh sync) Scan for corrupt inputs.** The planner only
 stats file sizes — it cannot see a `.db2.gz` with a valid header but a damaged
@@ -97,28 +102,33 @@ the whole pipeline over just the clean set by passing `--file-list good.txt` to
 
 ## 1. Choose your parameters
 
-You set six numbers. Only two need real thought — `BINS` and `SHARDS`.
+You set a target chunk size and `SHARDS`. The bin count is derived for you.
 
-### BINS — the number of finished chunks (and the array width for assembly)
+### TARGET_PER_BIN — molecules per finished chunk (BINS is computed from it)
 
-`BINS = ceil(estimated_total_molecules / target_chunk_size)`.
+Set the size you want (default **50,000**); the pipeline figures out how many
+chunks that needs. This matters because the chunk count has to be fixed *before*
+collect strides records, but the true molecule count isn't known until collect
+runs — guessing it is exactly how you end up with 180 k-molecule chunks when you
+meant 50 k.
 
-- Target chunk size of **50,000 molecules** is the default assumption.
-- **You must estimate the molecule count up front.** The parallel pipeline
-  produces *exactly* `BINS` chunks; chunk size falls out as
-  `total_molecules / BINS`. An estimate that's off by 20% just makes chunks 20%
-  bigger or smaller — harmless. It does **not** need to be exact.
-- If you don't know the count, estimate it from library size. ZINC 3D db2 runs
-  ~59 KB/molecule uncompressed; from the planner's `total input: X GB`
-  (compressed) a rough live-count is available from the ZINC tranche catalog, or
-  just target chunk *size* by bytes. For the reference 8.5 M-molecule library,
-  `BINS = 8.5e6 / 50000 ≈ 170`.
+- `make_shards.py --target-per-bin 50000` (which `submit.slurm` runs for you)
+  samples a few hundred files, computes molecules-per-compressed-byte, scales it
+  by the known total bytes, and writes `BINS = ceil(estimate / target)` to
+  `work/bins.txt`. `p1_collect` reads that when `-N` is omitted, and the assemble
+  array is sized from it.
+- The estimate is **~±10-20%** — chunks land near 50 k, occasionally 45-55 k.
+  That's fine for a "~50 k" target. If you need a hard ceiling, pass an explicit
+  `-N`/`BINS` computed from an exact count.
+- To pin it yourself, set `BINS=` in `submit.slurm` to a specific number; the
+  estimate step is then skipped.
 
 ### SHARDS — the collect array width (how many parallel readers)
 
 - This is the parallelism of the expensive phase. **~200 is a good default.**
-- Intermediates are `SHARDS × BINS` part files (200 × 170 = 34,000). That's fine
-  on Lustre/GPFS. Be cautious before pushing `SHARDS` far past a few hundred —
+- Intermediates are `SHARDS × BINS` part files (e.g. 200 × 640 = 128,000 for a
+  32 M library at 50 k/chunk). That's fine on Lustre/GPFS, but note it scales with
+  the derived `BINS` — be cautious before pushing `SHARDS` far past a few hundred —
   file count grows as `SHARDS × BINS`.
 - More shards = shorter per-task walls but more scheduler churn and more small
   files. Match it to how many array tasks your partition will actually run at
@@ -152,7 +162,8 @@ WORK_DIR=$SCRATCH/db2work                    # intermediates — MUST be on scra
 OUT_DIR=$SCRATCH/db2chunks                   # finished chunks + manifest.tsv
 
 SHARDS=200                                   # collect array width  (from step 1)
-BINS=170                                      # finished chunk count (from step 1)
+TARGET_PER_BIN=50000                          # target molecules per chunk (BINS derived)
+BINS=                                         # leave EMPTY to auto-size; or pin a number
 MODE=stride                                   # stride | greedy
 WEIGHT=count                                  # count | bytes | lines:C   (greedy only)
 
@@ -160,6 +171,7 @@ ACCOUNT=your_account                          # <-- set to your real account
 PARTITION=standard                            # <-- set to your real partition
 CPUS=1                                        # each task is single-threaded; leave at 1
 MEM=4G                                        # per-task memory; 4G is plenty for stride
+PLAN_TIME=01:00:00
 COLLECT_TIME=04:00:00
 ASSEMBLE_TIME=00:30:00
 ```
@@ -167,6 +179,13 @@ ASSEMBLE_TIME=00:30:00
 `PIPE` auto-detects its own directory (`parallel/`) and `SERIAL` resolves to the
 sibling `serial/` for the labeling step — leave both. Do not point `WORK_DIR` at
 `$HOME`.
+
+The **plan step runs first, synchronously** (via `srun`), so the derived `BINS`
+is known before the collect/assemble arrays are submitted — you'll see
+`plan     : done, BINS=<n>` before the job IDs. If your cluster doesn't allow
+`srun` from the submit host, run `make_shards.py --target-per-bin` yourself, read
+`work/bins.txt`, set `BINS=` in the config, and delete the `srun` block (there's
+a comment marking it).
 
 **Concurrency throttle (optional).** The collect submit line uses
 `--array=0-$((SHARDS-1))%$SHARDS`, i.e. `%SHARDS` = no throttle, all shards may
@@ -182,13 +201,13 @@ good neighbor), lower the number after `%`, e.g. edit it to `%50` to run at most
 bash parallel/submit.slurm
 ```
 
-This submits four jobs, each waiting on the previous with `--dependency=afterok`,
-and prints their job IDs:
+The plan runs first (blocking, ~minutes) and reports the derived bin count, then
+three jobs are submitted, each waiting on the previous with `--dependency=afterok`:
 
 ```
-plan     : 1234567
+plan     : done, BINS=641  (~50000 mol/chunk)
 collect  : 1234568  (array 0-199)
-assemble : 1234569  (array 0-169)
+assemble : 1234569  (array 0-640)
 final    : 1234570
 ```
 
@@ -266,8 +285,9 @@ Common causes: a **corrupt or truncated input file** (the task names it and exit
     --array=28,41,102 \
     -o "$SCRATCH/db2work/logs/collect_%a.out" -e "$SCRATCH/db2work/logs/collect_%a.err" \
     --wrap "python3 -u $PWD/parallel/p1_collect.py -w '$SCRATCH/db2work' \
-            -s \$SLURM_ARRAY_TASK_ID -N 170 --mode stride --weight count --skip-corrupt"
+            -s \$SLURM_ARRAY_TASK_ID --mode stride --weight count --skip-corrupt"
   ```
+  (No `-N` needed — `p1_collect` reads the bin count from `$SCRATCH/db2work/bins.txt`.)
   Then run assemble + final (step 3 below). This omits those files' molecules —
   fine for a handful out of millions; note it if completeness matters.
 
@@ -287,22 +307,25 @@ Common causes: a **corrupt or truncated input file** (the task names it and exit
 If instead the input tree is intact and only a few shards died on a transient
 error (out-of-time, node hiccup), rerun just those unchanged:
 
-**2. Rerun only the failed shards** (say tasks 3, 17, 102). Reuse the exact same
-`-w`, `-N`, `--mode`, `--weight` you configured:
+**2. Rerun only the failed shards** (say tasks 3, 17, 102). Reuse the same
+`-w`, `--mode`, `--weight` you configured (`p1_collect` re-reads the bin count
+from `bins.txt`, so no `-N`):
 
 ```bash
 sbatch -A your_account -p standard --cpus-per-task=1 --mem=4G --time=04:00:00 \
   --job-name=db2collect_rerun --array=3,17,102 \
   -o "$SCRATCH/db2work/logs/collect_%a.out" -e "$SCRATCH/db2work/logs/collect_%a.err" \
   --wrap "python3 -u $PWD/parallel/p1_collect.py -w '$SCRATCH/db2work' -s \$SLURM_ARRAY_TASK_ID \
-          -N 170 --mode stride --weight count"
+          --mode stride --weight count"
 ```
 
 **3. Resubmit assemble and final** (chained on the rerun):
 
 ```bash
+BINS=$(cat "$SCRATCH/db2work/bins.txt")      # the count the run was planned with
+
 JOB_A=$(sbatch --parsable -A your_account -p standard --cpus-per-task=1 --mem=4G \
-  --time=00:30:00 --job-name=db2assemble --array=0-169 \
+  --time=00:30:00 --job-name=db2assemble --array=0-$((BINS-1)) \
   --dependency=afterok:<COLLECT_RERUN_JOBID> \
   -o "$SCRATCH/db2work/logs/assemble_%a.out" -e "$SCRATCH/db2work/logs/assemble_%a.err" \
   --wrap "python3 -u $PWD/parallel/p2_assemble.py -w '$SCRATCH/db2work' -b \$SLURM_ARRAY_TASK_ID \
@@ -314,8 +337,9 @@ sbatch -A your_account -p standard --cpus-per-task=1 --mem=8G --time=01:00:00 \
   --wrap "python3 -u $PWD/parallel/p3_finalize.py -w '$SCRATCH/db2work' -o '$SCRATCH/db2chunks'"
 ```
 
-Replace `170`/`169`, account, partition, and paths with your values. Assembly
-deletes each bin's parts after a successful join, so **don't** rerun an assemble
+Replace account, partition, and paths with your values (`BINS` comes from
+`bins.txt`). Assembly deletes each bin's parts after a successful join, so
+**don't** rerun an assemble
 task that already succeeded — its parts are gone. If you need to rerun assembly,
 rerun the whole collect phase first, or pass `--keep-parts` to `p2_assemble.py`
 on the first run.
@@ -366,8 +390,9 @@ output directory is a **complete** labeled tree (every chunk present, edited or
 not) rather than a sparse overlay:
 
 ```bash
+BINS=$(cat $SCRATCH/db2work/bins.txt)     # or the count you pinned
 sbatch -A your_account -p standard --cpus-per-task=1 --mem=4G --time=01:00:00 \
-  --job-name=db2apply --array=1-170 \
+  --job-name=db2apply --array=1-$BINS \
   -o $SCRATCH/db2work/logs/apply_%a.out -e $SCRATCH/db2work/logs/apply_%a.err \
   --wrap 'CH=$(printf "chunk_%05d.db2.gz" $SLURM_ARRAY_TASK_ID); \
           python3 -u '"$PWD"'/serial/03_apply.py -c '"$SCRATCH"'/db2chunks \
@@ -375,7 +400,7 @@ sbatch -A your_account -p standard --cpus-per-task=1 --mem=4G --time=01:00:00 \
           --only $CH --copy-unedited'
 ```
 
-Set `--array=1-170` to `1-BINS`. Chunks are 1-based, 5-digit
+The array runs `1-BINS`. Chunks are 1-based, 5-digit
 (`chunk_00001.db2.gz`).
 
 - **`--copy-unedited`** copies chunks with no duplicates through to the output dir
@@ -432,9 +457,10 @@ line). The scripts report both and warn when they disagree.
 # 0. preflight
 python3 --version                                   # >= 3.9
 echo "$SCRATCH"; df -h "$SCRATCH"                    # scratch has >= input-size free
-python3 parallel/make_shards.py -i /path/to/3D -o "$SCRATCH/db2_probe" -S 200   # file count + total GB
+python3 parallel/make_shards.py -i /path/to/3D -o "$SCRATCH/db2_probe" \
+    -S 200 --target-per-bin 50000                    # file count, total GB, estimated BINS
 
-# 1-3. edit parallel/submit.slurm config block, then:
+# 1-3. edit parallel/submit.slurm config block (set TARGET_PER_BIN), then:
 bash parallel/submit.slurm
 
 # 4. watch
@@ -456,11 +482,11 @@ sbatch ... serial/03_apply.py ... --array=1-BINS --only $CH --copy-unedited  # s
 
 | Resource | Rule of thumb | Notes |
 |----------|--------------|-------|
-| `BINS` | `ceil(total_mols / 50000)` | = number of finished chunks. 8.5 M → ~170. Estimate is fine. |
+| `BINS` | auto: `ceil(estimate / TARGET_PER_BIN)` | derived by `make_shards --target-per-bin` into `work/bins.txt`; don't hand-set unless you want a hard count. |
 | `SHARDS` | ~200 | Collect parallelism. Intermediates = `SHARDS × BINS` files. |
 | Scratch space | ~1× input size | Parts freed incrementally by assembly. Never use `$HOME`. |
 | Per-task memory | 4 G (collect/assemble/apply), 8 G (final/label) | `stride` mode is lightweight; `greedy` and `02` hold more. |
-| Open files | `BINS + 32` per collect task | 170 bins ≈ 202 FDs, under the usual 1024. Thousands of bins → raise `ulimit -n`. |
+| Open files | `BINS + 32` per collect task | e.g. 640 bins ≈ 672 FDs, under the usual 1024. Thousands of bins → raise `ulimit -n`. |
 | Collect wall | ≥ `total/SHARDS ÷ 250 mol/s` | Default 4 h is generous for ~200 shards; tighten after a real run. |
 
 ---

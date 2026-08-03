@@ -30,11 +30,37 @@ import zlib
 from multiprocessing import Pool
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root holds db2common.py
-from db2common import find_inputs, dedupe_by_inode, is_gzip, iter_records_bytes
+from db2common import (find_inputs, dedupe_by_inode, is_gzip, iter_records_bytes,
+                       iter_sources, TAR_EXTS, INPUT_SUFFIXES)
+
+
+def check_archive(path):
+    """Fully stream every member of a .db2.tgz. Returns (path, status, detail)."""
+    container = []
+    members = 0
+    bad = []
+    for label, fh in iter_sources([path], lambda p, e: container.append(e)):
+        members += 1
+        try:
+            last_complete = True
+            for _rec, complete in iter_records_bytes(fh):
+                last_complete = complete
+            if not last_complete:
+                bad.append(label.split("::")[-1])
+        except (OSError, EOFError, zlib.error) as exc:
+            bad.append("{} ({})".format(label.split("::")[-1], exc))
+    if container:
+        return (path, "CORRUPT", "archive: {}".format(container[0]))
+    if bad:
+        return (path, "TRUNCATED", "{} bad member(s), e.g. {}".format(
+            len(bad), bad[0]))
+    return (path, "OK", "{} members".format(members))
 
 
 def check_file(path):
-    """Fully stream one file. Returns (path, status, detail)."""
+    """Fully stream one source. Returns (path, status, detail)."""
+    if path.endswith(TAR_EXTS):
+        return check_archive(path)
     gz = is_gzip(path)
     opener = gzip.open if gz else open
     try:
@@ -78,7 +104,7 @@ def main():
             inputs = [ln.strip() for ln in fh if ln.strip()]
     else:
         sys.stderr.write("walking {}...\n".format(args.input_dir))
-        inputs = find_inputs(args.input_dir, tuple(args.suffix or [".db2.gz"]))
+        inputs = find_inputs(args.input_dir, tuple(args.suffix or INPUT_SUFFIXES))
     if not inputs:
         sys.exit("no input files found")
     if not args.keep_duplicate_paths:

@@ -57,7 +57,9 @@ E                             <- terminator, a line that is exactly "E"
 ```
 
 - A record runs from an `M` line to the next `E` line inclusive.
-- The **id** is the `ZINC…` token found on the `M` (header) lines.
+- The **id** is the `ZINC…` token on the `M` (header) lines (old format), or —
+  for ZINC22, where the id overflows the fixed-width header field — the truncated
+  first token of the first `M` line (see below).
 - Records are addressed by **position** (which chunk, which index within it),
   **never by id** — ids can legitimately repeat (protonation states,
   tautomers, stereoisomers), so id is not a key.
@@ -70,12 +72,47 @@ The slow parser (`iter_records`) splits on any line whose first character is
 
 ---
 
+## ZINC22 tarballs and the new id scheme
+
+Newer data (ZINC22) ships differently, and the parallel pipeline handles both
+old and new transparently:
+
+- **Inputs are `.db2.tgz` archives**, each holding thousands of tiny `.db2`
+  members under a nested prefix
+  (`H05/H05M000/2t/tm/ZINC550000002ttm.0.O.db2`). They are **read in place,
+  member by member** (`iter_sources`) — never extracted, because millions of
+  tiny files would exhaust inodes on a shared filesystem. `make_shards` shards on
+  the archive list; `p1_collect` streams members; a member ending in `.gz` is
+  decompressed on the fly.
+- **The manifest `source_file` becomes `<archive>::<member>`**, giving exact
+  per-molecule provenance the old format lacked. (No pipeline stage reopens
+  source paths from the manifest, so nothing downstream needs to split on `::`.)
+- **The id is truncated in the header.** The db2 id field is fixed-width, so a
+  full id + conformer like `ZINC550000002ttm.0` (18 chars) is *left*-truncated to
+  `NC550000002ttm.0` (16) in the record. The pipeline stores the **full** id
+  (parsed from the member filename, `id_from_name`) in the manifest, while
+  `03_apply` verifies and relabels against the truncated in-record form
+  tolerantly (`id_match` — the record id is a suffix of the full one). Old bare
+  `.db2.gz` inputs are unaffected: their id still comes from the header `ZINC`
+  token.
+- **Corrupt archives fail loudly, per archive** (a bad `.db2.tgz` is caught at
+  the container level and skips only that shard's archive; a malformed member is
+  caught while reading). Purge and re-fetch corrupt archives rather than working
+  around them.
+
+The **serial pipeline (`01`–`04`) still reads only bare `.db2.gz`** — use the
+parallel pipeline for `.db2.tgz` archives (which is what you'd use at ZINC22
+scale anyway).
+
+---
+
 ## Repository layout
 
 ```
 db2pipe/
-  db2common.py            shared library: parsers, id extraction, relabeling,
-                          inode dedup, weight functions, progress reporting
+  db2common.py            shared library: parsers, tar/bare source reader
+                          (iter_sources), id extraction, relabeling, inode
+                          dedup, weight functions, progress reporting
   serial/                 standalone single-process pipeline
     01_chunk.py           walk tree -> fixed-size chunks + manifest
     02_label.py           manifest -> labels.tsv (decide new ids; touches no data)
@@ -83,7 +120,7 @@ db2pipe/
     04_rebalance.py       post-hoc: redistribute existing chunks to balance load
   parallel/               SLURM job-array pipeline (same output format)
     check_inputs.py       preflight: scan the tree for corrupt/truncated files
-    make_shards.py        split input tree into size-balanced shard lists
+    make_shards.py        split input tree into shard lists; size BINS from a target
     p1_collect.py         [array] parse a shard, stride records into per-bin parts
     p2_assemble.py        [array] concatenate a bin's parts into a finished chunk
     p3_finalize.py        stitch per-shard manifests into one global manifest
@@ -258,10 +295,20 @@ work/
 
 ### Sizing
 
-- `BINS = ceil(total_molecules / target_chunk_size)` → 8.5 M / 50 k ≈ **170**.
+- **`BINS` (number of finished chunks) is auto-derived — don't guess it.** The
+  molecule count isn't known until collect runs, but the number of bins has to be
+  fixed before it strides records. So `make_shards --target-per-bin 50000`
+  estimates the count from a sample of files (molecules-per-compressed-byte ×
+  total bytes), computes `BINS = ceil(estimate / target)`, and writes it to
+  `work/bins.txt`; `p1_collect` reads that when `-N` is omitted, and
+  `submit.slurm` uses it to size the assemble array. `submit.slurm` is driven by
+  `TARGET_PER_BIN`, not a hardcoded `BINS`. The estimate is ~±10-20% (fine for a
+  "~50k" target); pass `-N` to override it, or a leave `BINS=` set explicitly in
+  `submit.slurm`. This is what prevents the classic "I guessed 8 M, it was 32 M,
+  now every chunk is 180 k" mistake.
 - `SHARDS` = collect array width. ~200 is a reasonable start. Intermediates are
-  S×N part files (200×170 = 34 000), fine on Lustre; be mindful before pushing
-  S much higher.
+  S×N part files, and N scales with the target (200×640 ≈ 128 000 for 32 M at
+  50 k/chunk) — fine on Lustre, but be mindful before pushing S much higher.
 - Scratch: phase 1 writes parts totaling ~1× the input size, freed incrementally
   by phase 2. Budget ~input-size on `$SCRATCH`; do not point `WORK_DIR` at home.
 
