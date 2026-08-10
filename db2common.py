@@ -128,14 +128,24 @@ def _looks_like_id_bytes(tok):
 def id_match(found, expected):
     """True if the id read back from a record matches the expected id.
 
-    Tolerates the ZINC22 truncation: the db2 id field is fixed-width, so a long
-    id is left-truncated in the header (record 'NC550000002ttm.0' for manifest
-    id 'ZINC550000002ttm.0'). The record id is therefore a suffix of the full
-    one.
+    Tolerates the ZINC22 truncation. The db2 id field is fixed-width (16
+    characters), and which end gets cut varies by sub-library, so the record id
+    may be either a suffix or a prefix of the full one:
+
+        ZINC550000002ttm.0  ->  NC550000002ttm.0    (left-truncated, a suffix)
+        ZINCa50000001eSu.0  ->  ZINCa50000001eSu    (right-truncated, a prefix)
+
+    Measured on one 42,989-molecule ZINC22 chunk: 4,873 ids truncate on the left
+    and 38,116 on the right, so accepting only one direction rejects most of a
+    library. Both directions are accepted here; position remains the actual
+    identity (see the manifest's (chunk, chunk_idx)), and a 16-character match
+    in either direction is far too specific to collide by accident.
     """
     if found == expected:
         return True
-    return found != "NO_ID" and expected.endswith(found)
+    if found == "NO_ID":
+        return False
+    return expected.endswith(found) or expected.startswith(found)
 
 
 def iter_records(fh):

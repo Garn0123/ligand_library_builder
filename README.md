@@ -118,6 +118,8 @@ db2pipe/
     02_label.py           manifest -> labels.tsv (decide new ids; touches no data)
     03_apply.py           apply labels.tsv to chunks (position-addressed rewrite)
     04_rebalance.py       post-hoc: redistribute existing chunks to balance load
+    05_reindex.py         post-QC: reindex a manifest after molecules were
+                          removed from the chunks (applies a db2tool map)
   parallel/               SLURM job-array pipeline (same output format)
     check_inputs.py       preflight: scan the tree for corrupt/truncated files
     make_shards.py        split input tree into shard lists; size BINS from a target
@@ -134,6 +136,25 @@ db2pipe/
 run serially in both — the parallel pipeline calls them after assembly. The
 shared library `db2common.py` sits at the repo root; every stage script imports
 it from there.
+
+`serial/05_reindex.py` is optional and runs *after* QC rather than as part of
+compilation. Quality tooling
+([db2tool](https://github.com/Garn0123/dock6_claude/tree/feat/db2tool)) can drop
+molecules from finished chunks — corrupt records, or molecules whose every
+conformer set is flagged clashing — and that renumbers every molecule after the
+first deletion. The manifest's `(chunk, chunk_idx)` keys then point at the wrong
+rows, silently. db2tool writes a map of what moved where; this stage applies it:
+
+```bash
+db2tool subset --drop-all-broken --map remap.tsv -o clean/c1.db2.gz chunks/c1.db2.gz
+python3 serial/05_reindex.py --map remap.tsv -m chunks/manifest.tsv -o clean
+```
+
+Rows whose `new_idx` is `-1` are dropped; the rest take `chunk_idx = new_idx`.
+Chunks absent from the map pass through untouched, so reindexing one chunk of a
+set is safe. Like stage 3 it verifies ids before rewriting and aborts on a stale
+map. **If QC only *repairs* molecules rather than removing them, no reindexing
+is needed** — repair preserves count and order, so the manifest stays valid.
 
 ---
 
