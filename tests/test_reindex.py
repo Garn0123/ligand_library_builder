@@ -93,11 +93,13 @@ def test_chunk_absent_from_map_passes_through(tmp_path, run_script):
 
 
 def test_tolerates_truncated_ids_in_the_map(tmp_path, run_script):
-    """db2tool reports the db2 header's 16-char id, which is truncated.
+    """db2tool reports the db2 header's 16-character id field.
 
-    Which end gets cut varies by sub-library, so the map's name may be either a
-    prefix or a suffix of the manifest's id.  Both must be accepted, or the
-    guard rejects most of a real ZINC22 library.
+    A ZINC22 base id fills that field exactly, so most tranches write it with
+    the protomer suffix omitted, while zinc-22a writes the full id and loses two
+    characters off the LEFT.  The map's name is therefore either the manifest id
+    minus its suffix or its last 16 characters; both must be accepted, or the
+    guard rejects most of a real library.
     """
     chunks, manifest = _chunked(tmp_path, run_script)
     rows = _read_manifest(manifest)

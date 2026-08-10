@@ -128,18 +128,27 @@ def _looks_like_id_bytes(tok):
 def id_match(found, expected):
     """True if the id read back from a record matches the expected id.
 
-    Tolerates the ZINC22 truncation. The db2 id field is fixed-width (16
-    characters), and which end gets cut varies by sub-library, so the record id
-    may be either a suffix or a prefix of the full one:
+    Tolerates how ZINC22 writes ids into the db2 header, which is a fixed
+    16-character field. A ZINC22 base id is exactly 16 characters (``ZINC`` plus
+    12), and the protomer suffix adds two more, so a full id does not fit. Two
+    upstream behaviours result, and both appear in one library:
 
-        ZINC550000002ttm.0  ->  NC550000002ttm.0    (left-truncated, a suffix)
-        ZINCa50000001eSu.0  ->  ZINCa50000001eSu    (right-truncated, a prefix)
+        ZINCa50000001eSu.0  ->  ZINCa50000001eSu    suffix omitted; nothing
+                                                    truncated, the base id fits
+                                                    the field exactly
+        ZINC550000002ttm.0  ->  NC550000002ttm.0    full id written and the two
+                                                    overflow characters cut from
+                                                    the LEFT
 
-    Measured on one 42,989-molecule ZINC22 chunk: 4,873 ids truncate on the left
-    and 38,116 on the right, so accepting only one direction rejects most of a
-    library. Both directions are accepted here; position remains the actual
-    identity (see the manifest's (chunk, chunk_idx)), and a 16-character match
-    in either direction is far too specific to collide by accident.
+    So the record id is either the full id minus its protomer suffix, or the
+    last 16 characters of the full id. Measured over a 42,989-molecule chunk:
+    nine of ten tranches omit the suffix (38,116 molecules) and ``zinc-22a``
+    alone writes the full id and overflows (4,873) -- perfectly split by
+    tranche, no mixing. Accepting only one form rejects most of a library.
+
+    Position remains the real identity (the manifest's (chunk, chunk_idx)); a
+    16-character match in either form is far too specific to collide, since base
+    ids are themselves 16 characters and unique.
     """
     if found == expected:
         return True
