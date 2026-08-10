@@ -87,12 +87,17 @@ old and new transparently:
 - **The manifest `source_file` becomes `<archive>::<member>`**, giving exact
   per-molecule provenance the old format lacked. (No pipeline stage reopens
   source paths from the manifest, so nothing downstream needs to split on `::`.)
-- **The id is truncated in the header.** The db2 id field is fixed-width, so a
-  full id + conformer like `ZINC550000002ttm.0` (18 chars) is *left*-truncated to
-  `NC550000002ttm.0` (16) in the record. The pipeline stores the **full** id
-  (parsed from the member filename, `id_from_name`) in the manifest, while
-  `03_apply` verifies and relabels against the truncated in-record form
-  tolerantly (`id_match` — the record id is a suffix of the full one). Old bare
+- **The in-record id does not carry the full name.** The db2 id field is
+  exactly 16 characters, which is exactly the width of a ZINC22 base id
+  (`ZINC` + 12) — so the protomer suffix does not fit, and tranches resolve that
+  two different ways. Most write the base id and **omit the suffix**
+  (`ZINCa50000001eSu.0` → `ZINCa50000001eSu`); `zinc-22a` writes the full id and
+  the two overflow characters are cut from the **left**
+  (`ZINC550000002ttm.0` → `NC550000002ttm.0`). Measured over a 42,989-molecule
+  chunk: 38,116 the first way, 4,873 the second, split perfectly by tranche.
+  The pipeline stores the **full** id (parsed from the member filename,
+  `id_from_name`) in the manifest, while `03_apply` and `05_reindex` verify
+  against the in-record form tolerantly (`id_match` accepts both). Old bare
   `.db2.gz` inputs are unaffected: their id still comes from the header `ZINC`
   token.
 - **Corrupt archives fail loudly, per archive** (a bad `.db2.tgz` is caught at
