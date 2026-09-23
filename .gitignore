@@ -182,3 +182,34 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+# ============================================================================
+# small_molecule_prep: code is tracked, data and run outputs never are.
+# ============================================================================
+# Machine-specific tool paths (copy config/hpc.env.example).
+config/hpc.env
+
+# The ZINC download (~1 TB for H14-H28) and everything derived from it.
+zinc22/
+*.smi.gz
+*.db2.gz
+*.db2.tgz
+*.tgz
+samples/
+smoke/
+parents/
+protomers/
+library/
+preflight_out/
+qupkake_work/
+
+# run.sh / fetch.sh / status.sh / verify.sh ledgers (regenerated per pass).
+joblog-*.tsv
+missing.txt
+retry.txt
+permanent.tsv
+failed.tsv
+corrupt.txt
+urls_2d.txt
+
+# SLURM logs.
+logs/
