@@ -180,6 +180,39 @@ it would merge the isomers under one name silently rather than visibly.
 (M-line name ≠ requested), alongside the AMSOL-vs-formal charge check that
 backs invariant 4.
 
+## 5b. Mol2 from the db2 (optional, for mol2 / flexible-ligand docking)
+
+No second 3D tool such as CORINA. Each molecule's mol2 is a conformer read back
+out of its db2 by `db2tool tomol2` (dock6_claude `294d235`, using DOCK's own db2
+reader and mol2 writer), so it is consistent with the db2 by construction:
+
+| | mol2 | db2 |
+| --- | --- | --- |
+| coordinates | one conformer set from the db2, lowest internal energy | all sets |
+| partial charges | the db2's AMSOL charges | same |
+| atom types | the db2's SYBYL types | same |
+| title | the 16-character contract name | same |
+
+```bash
+common/with_env.sh DOCK python3 run_qupkake/db2_to_mol2.py $d \
+    --library library/library.tsv -o library/library.mol2
+```
+
+`db2tool` comes from `DB2TOOL_EXE` / `DOCK_SETUP` in `config/hpc.env`. Over plain
+`tomol2`, the wrapper adds three things:
+
+- **One conformer per molecule.** db2_converter writes one db2 record per rigid
+  fragment, all under the same name, and `tomol2 --best` would emit each.
+- **Nothing silently missing.** A molecule whose every set is flagged broken is
+  taken from its lowest broken set and flagged in the `.tsv`
+  (`--no-broken-fallback` to drop them instead).
+- **The charge check again.** With `--library`, each mol2's summed charge must
+  match the protomer's net charge, and every library name must come out. It
+  exits 1 otherwise.
+
+It accepts any db2 files, including mol_compiler chunks: run it per chunk to get
+mol2 chunks that line up with the db2 chunks.
+
 ## 6. Chunking for docking (mol_compiler)
 
 The verified `.db2.gz` files go to `mol_compiler`'s parallel pipeline as bare

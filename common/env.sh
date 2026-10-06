@@ -51,12 +51,22 @@ llb_load_config() {
 }
 
 # llb_activate TOOL -- run ${TOOL}_SETUP, then activate ${TOOL}_ENV.
-# PREP falls back to QUPKAKE when PREP_ENV is empty.
+# PREP falls back to QUPKAKE when PREP_ENV is empty. DOCK (db2tool, a compiled
+# binary) needs no conda env: with DOCK_ENV empty only DOCK_SETUP runs.
 llb_activate() {
     local tool="$1" setup_var="${1}_SETUP" env_var="${1}_ENV"
     local setup="${!setup_var:-}" env="${!env_var:-}"
     if [[ "$tool" == PREP && -z "$env" ]]; then
         setup="${QUPKAKE_SETUP:-}"; env="${QUPKAKE_ENV:-}"
+    fi
+    if [[ -z "$env" && "$tool" == DOCK ]]; then
+        local rc=0
+        set +u
+        if [[ -n "$setup" ]]; then eval "$setup" || rc=$?; fi
+        set -u
+        (( rc == 0 )) || { echo "FATAL: DOCK_SETUP failed (rc=$rc): '$setup'" >&2; return 2; }
+        echo "[DOCK] no conda env (DOCK_ENV empty); setup: '${setup:-none}'"
+        return 0
     fi
     if [[ -z "$env" ]]; then
         echo "FATAL: ${env_var} is empty in $LLB_CONFIG" >&2; return 2
