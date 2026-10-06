@@ -86,7 +86,8 @@ def main(argv=None) -> int:
     with open(args.protomers_csv) as fh:
         tsv = args.protomers_csv.endswith(".tsv")
         expected = [{"protomer_name": r.get("protomer_name") or r["name"],
-                     "parent_name": r.get("parent_name") or r.get("zinc_id", ""),
+                     "parent_name": (r.get("parent_name") or r.get("input_name")
+                                     or r.get("zinc_id", "")),
                      "net_charge": r["net_charge"]}
                     for r in csv.DictReader(fh, delimiter="\t" if tsv else ",")]
 

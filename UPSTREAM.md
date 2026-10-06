@@ -71,9 +71,30 @@ common/with_env.sh PREP python run_qupkake/prepare_parents.py samples/H*.smi \
     -o parents --shard-size 250
 ```
 
-Rejects non-ZINC ids (the base id *is* `zinc_id[4:16]`), neutralizes with the same
-`standardize` QupKake's wrapper uses, and dedupes by id and by neutral structure.
-Also writes `preflight.smi`: 20 parents, largest bins first.
+Neutralizes with the same `standardize` QupKake's wrapper uses, and dedupes by
+name and by neutral structure. Also writes `preflight.smi`: 20 parents, largest
+bins first.
+
+**Your own SMILES, no sampling:** skip step 1 and pass the files straight in,
+plain or gzipped, any names:
+
+```bash
+common/with_env.sh PREP python run_qupkake/prepare_parents.py my_ligands.smi.gz -o parents
+```
+
+Names are handled automatically by their shape (`run_qupkake/llb_ids.py`):
+
+| Input name | Becomes |
+| --- | --- |
+| `ZINC` + 12 (`ZINCh10000007sNS`) | kept; base ID = its last 12 characters |
+| `ZINC12345` (old, unpadded) | padded to `ZINC000000012345`, then as above |
+| `ZINC…` in any other shape (`ZINC000012345678.0`) | **rejected** `malformed_zinc_id`: a damaged ID, not a new molecule |
+| anything else (`CHEMBL25`, `my(ligand)/2`) | base ID `Z` + 11 characters of its sha256; travels as `LLB<base>` |
+
+No ZINC base ID starts with `O`–`Z` (ZINC22's first character is the heavy-atom
+count, at most H49 = `N`; ZINC20's is a digit), so hashed and ZINC base IDs can't
+collide. Your original name is kept as `input_name` in `parents.tsv` and
+`library.tsv`. When one structure appears under two names, the ZINC ID wins.
 
 ## 3. QupKake
 

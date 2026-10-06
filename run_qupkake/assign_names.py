@@ -8,9 +8,11 @@ shard can see the others.
 
     C  <12: base id>  <protomer>  <stereo>  C          exactly 16 characters
 
-  base id   ZINC id [4:16]. ZINC20 (ZINC000012345678 -> 000012345678) and ZINC22
-            (ZINCh10000007sNS -> h10000007sNS) both give 12 base62 characters,
-            so the id is kept verbatim and name -> ZINC id needs no lookup.
+  base id   llb_ids.base_id_of(parent id). For a ZINC parent, ZINC id [4:16]:
+            ZINC20 (ZINC000012345678 -> 000012345678) and ZINC22
+            (ZINCh10000007sNS -> h10000007sNS) both give 12 base62 characters.
+            For any other name, 'Z' + 11 base62 of its sha256 -- a namespace no
+            ZINC id can enter (see llb_ids.py). library.tsv maps back either way.
   protomer  base62, renumbered 0.. per parent in QupKake population order.
   stereo    base62, 0.. per (parent, protomer), over the stereo CLOSURE below.
 
@@ -64,6 +66,7 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
+from llb_ids import base_id_of, is_zinc
 from rdkit import Chem, RDLogger
 from rdkit.Chem.EnumerateStereoisomers import (EnumerateStereoisomers,
                                                 StereoEnumerationOptions)
@@ -71,7 +74,6 @@ from rdkit.Chem.EnumerateStereoisomers import (EnumerateStereoisomers,
 RDLogger.DisableLog("rdApp.*")
 
 BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-ZINC_ID = re.compile(r"^ZINC[0-9A-Za-z]{12}$")
 CONTRACT = re.compile(r"^C[0-9A-Za-z]{14}C$")
 NAME_LEN = 16
 # db2_converter/utils/rdkit_gen.py: rdk_enumerate_smi -> StereoEnumerationOptions(
@@ -104,8 +106,8 @@ def invertomer_key(smi: str) -> str:
     return Chem.MolToSmiles(m)
 
 
-def contract_name(zinc_id: str, p: int, s: int) -> str:
-    return f"C{zinc_id[4:16]}{BASE62[p]}{BASE62[s]}C"
+def contract_name(base: str, p: int, s: int) -> str:
+    return f"C{base}{BASE62[p]}{BASE62[s]}C"
 
 
 def base_id(name: str) -> str:
@@ -161,19 +163,32 @@ def main(argv=None) -> int:
             with open(f) as fh:
                 qk_failed += [(r["name"], r["reason"]) for r in csv.DictReader(fh, delimiter="\t")]
 
-    dropped: list[tuple[str, str, str, str]] = []     # zinc_id, protomer, reason, detail
-    bad_ids = [p for p in rows_by_parent if not ZINC_ID.match(p)]
-    if bad_ids:
-        raise SystemExit(f"{len(bad_ids)} parent name(s) are not ZINC ids, e.g. {bad_ids[:3]}. "
-                         f"prepare_parents.py should have rejected them; was it skipped?")
+    dropped: list[tuple[str, str, str, str]] = []     # parent_id, protomer, reason, detail
+    bases: dict[str, str] = {}
+    for pid in rows_by_parent:
+        try:
+            bases[pid] = base_id_of(pid)
+        except ValueError:
+            raise SystemExit(f"parent {pid!r} is neither a ZINC id nor an LLB<base id>. "
+                             f"prepare_parents.py assigns these; was it skipped?")
+
+    # original names (prepare_parents.py --outdir); a ZINC id is its own name
+    input_name: dict[str, str] = {}
+    parents_rows: list[dict] = []
+    if parents_dir is not None:
+        with open(parents_dir / "parents.tsv") as fh:
+            parents_rows = list(csv.DictReader(fh, delimiter="\t"))
+        for r in parents_rows:
+            pid = r.get("parent_id") or r["zinc_id"]     # older parents.tsv: zinc_id only
+            input_name[pid] = r.get("input_name") or pid
 
     # ---- closure + naming ----------------------------------------------------
     library: list[dict] = []
     owner: dict[str, str] = {}                        # final SMILES -> name that holds it
     closure_added = 0
-    for zid in sorted(rows_by_parent):
+    for pid in sorted(rows_by_parent):
         by_state: dict[int, list[dict]] = defaultdict(list)
-        for r in rows_by_parent[zid]:
+        for r in rows_by_parent[pid]:
             by_state[int(r["protomer_index"])].append(r)
         p_new = 0
         for p_old in sorted(by_state):
@@ -186,34 +201,36 @@ def main(argv=None) -> int:
             closure_added += len(isomers) - len(rows)
             head = rows[0]
             if not isomers:
-                dropped.append((zid, str(p_old), "unparsable_protomer", head["smiles"]))
+                dropped.append((pid, str(p_old), "unparsable_protomer", head["smiles"]))
                 continue
             if len(isomers) > args.max_stereo:
-                dropped.append((zid, str(p_old), "too_many_stereoisomers",
+                dropped.append((pid, str(p_old), "too_many_stereoisomers",
                                 f"{len(isomers)} > {args.max_stereo}"))
                 continue
             not_closed = [s for s in isomers if len(closure(s)) != 1]
             if not_closed:
-                dropped.append((zid, str(p_old), "stereo_not_closed", not_closed[0]))
+                dropped.append((pid, str(p_old), "stereo_not_closed", not_closed[0]))
                 continue
             taken = [s for s in isomers if s in owner]
             for s in taken:
-                dropped.append((zid, str(p_old), "duplicate_structure",
+                dropped.append((pid, str(p_old), "duplicate_structure",
                                 f"{s} already named {owner[s]}"))
             isomers = [s for s in isomers if s not in owner]
             if not isomers:
                 continue
             if p_new >= len(BASE62):
-                dropped.append((zid, str(p_old), "too_many_protomers", "> 62"))
+                dropped.append((pid, str(p_old), "too_many_protomers", "> 62"))
                 continue
             first_of: dict[str, str] = {}
             for s_idx, smi in enumerate(isomers):
-                name = contract_name(zid, p_new, s_idx)
+                name = contract_name(bases[pid], p_new, s_idx)
                 inv = first_of.setdefault(invertomer_key(smi), name)
                 owner[smi] = name
                 mol = Chem.MolFromSmiles(smi)
                 library.append({
-                    "name": name, "base_id": base_id(name), "zinc_id": zid,
+                    "name": name, "base_id": base_id(name), "parent_id": pid,
+                    "zinc_id": pid if is_zinc(pid) else "",
+                    "input_name": input_name.get(pid, pid),
                     "protomer_index": p_new, "stereo_index": s_idx,
                     "net_charge": Chem.GetFormalCharge(mol),
                     "heavy_atoms": mol.GetNumHeavyAtoms(),
@@ -234,16 +251,17 @@ def main(argv=None) -> int:
             problems.append(f"{len(dup)} duplicate {label}, e.g. {dup[:3]}")
     owners = defaultdict(set)
     for r in library:
-        owners[r["base_id"]].add(r["zinc_id"])
+        owners[r["base_id"]].add(r["parent_id"])
     if any(len(v) > 1 for v in owners.values()):
-        problems.append("a base id maps to more than one ZINC id")
+        problems.append("a base id maps to more than one parent")
     if problems:
         raise SystemExit("contract violated -- nothing final written:\n  " + "\n  ".join(problems))
 
     # ---- write ---------------------------------------------------------------
     with open(outdir / "library.smi", "w") as fh:
         fh.writelines(f"{r['smiles']} {r['name']}\n" for r in library)
-    cols = ["name", "base_id", "zinc_id", "protomer_index", "stereo_index", "net_charge",
+    cols = ["name", "base_id", "parent_id", "zinc_id", "input_name", "protomer_index",
+            "stereo_index", "net_charge",
             "heavy_atoms", "ph_values", "population_estimate", "invertomer_of", "note",
             "smiles"]
     with open(outdir / "library.tsv", "w", newline="") as fh:
@@ -251,29 +269,28 @@ def main(argv=None) -> int:
         w.writeheader()
         w.writerows(library)
     with open(outdir / "dropped.tsv", "w") as fh:
-        fh.write("zinc_id\tprotomer_index\treason\tdetail\n")
+        fh.write("parent_id\tprotomer_index\treason\tdetail\n")
         fh.writelines("\t".join(d) + "\n" for d in dropped)
         fh.writelines(f"{n}\t\t{r}\t\n" for n, r in qk_failed)
 
     # per-bin attrition: parents in -> parents with >= 1 named protomer
     attrition = {}
-    if parents_dir is not None:
-        with open(parents_dir / "parents.tsv") as fh:
-            parents = list(csv.DictReader(fh, delimiter="\t"))
-        named = {r["zinc_id"] for r in library}
+    if parents_rows:
+        named = {r["parent_id"] for r in library}
         by_bin = defaultdict(lambda: Counter())
-        for p in parents:
+        for p in parents_rows:
             b = p["heavy_atoms"]
             by_bin[b]["parents"] += 1
-            by_bin[b]["named"] += p["zinc_id"] in named
+            by_bin[b]["named"] += (p.get("parent_id") or p["zinc_id"]) in named
         attrition = {b: dict(c) for b, c in sorted(by_bin.items(), key=lambda x: int(x[0]))}
 
     reasons = Counter(d[2] for d in dropped) + Counter(r for _, r in qk_failed)
     stats = {
         "shards_read": len(found), "shards_missing": missing,
-        "parents_named": len({r["zinc_id"] for r in library}),
+        "parents_named": len({r["parent_id"] for r in library}),
+        "parents_hashed": len({r["parent_id"] for r in library if not r["zinc_id"]}),
         "names": len(library),
-        "protomers": len({(r["zinc_id"], r["protomer_index"]) for r in library}),
+        "protomers": len({(r["parent_id"], r["protomer_index"]) for r in library}),
         "stereo_closure_added": closure_added,
         "n_h_invertomers": sum(1 for r in library if r["invertomer_of"]),
         "dropped": dict(reasons),
