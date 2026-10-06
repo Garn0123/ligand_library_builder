@@ -44,6 +44,8 @@ in `sample_2d.py`'s docstring.
 
 ```bash
 python3 mol_download/sample_2d.py --heavy 14-28 --print-urls > urls_2d.txt  # 904 files, ~960 GB
+# or, from a script CartBlanche22 gave you (curl/wget/PowerShell; don't run it as-is):
+#   mol_download/extract_urls.sh zinc22-2D-download.curl > urls_2d.txt
 cd $ZINC_DATA                                     # scratch; files land under $PWD/zinc22/
 $LLB/mol_download/run.sh $LLB/urls_2d.txt 4       # DTN / tmux, ~5-19 h
 $LLB/mol_download/verify.sh --purge

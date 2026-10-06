@@ -14,8 +14,8 @@ Lakes. Everything in the Gotchas section actually happened.
 ```bash
 chmod +x *.sh                          # yes, really — see Gotcha 1
 
-# 1. get a URL list out of the tranche browser's download script
-grep -o 'https://[^ ]*' download_all.sh | sort -u > urls.txt
+# 1. get a URL list out of the tranche browser's download script (curl, wget or PowerShell)
+./extract_urls.sh download_all.sh > urls.txt
 
 # 2. first pass
 ./run.sh urls.txt 4
@@ -53,6 +53,7 @@ whole path from here to db2.
 
 | File | Purpose |
 |---|---|
+| `extract_urls.sh` | URLs out of a CartBlanche22 curl/wget/PowerShell script, cleaned for `run.sh`. |
 | `fetch.sh` | Fetches one URL. Idempotent, purges partials, retries 5xx, bails on 404. |
 | `run.sh` | Drives `fetch.sh` through GNU parallel at a polite concurrency. |
 | `status.sh` | Diffs expected-vs-present on disk. **The authoritative completion check.** |
@@ -76,9 +77,15 @@ stays 404. Everything else is rewritten per pass.
 generates a shell script of `wget` commands. Strip it down to bare URLs:
 
 ```bash
-grep -o 'https://[^ ]*' download_all.sh | sort -u > urls.txt
+./extract_urls.sh download_all.sh > urls.txt     # curl, wget or PowerShell script
 wc -l < urls.txt
 ```
+
+Not `grep -o 'https://[^ ]*'`: it keeps a closing quote on quoted URLs and a
+trailing `\r` on scripts with Windows line endings. With a `\r`, every URL
+differs from the path on disk and `status.sh` reports every file missing
+forever. `extract_urls.sh` strips both and rejects anything that isn't a file
+on files.docking.org.
 
 Don't run the generated script as-is. It ships `-r -l7 -np -A '<pattern>'`,
 which are recursive-crawl flags copied from directory-download examples. Your
