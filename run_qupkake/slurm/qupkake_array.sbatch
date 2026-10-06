@@ -10,7 +10,7 @@
 # One QupKake + protomer-enumeration task per parent shard.
 #
 # Submit with run_qupkake/submit_qupkake.sh, which preflights the QupKake env
-# on the login node and passes account, partition, SMP_ROOT, SMP_CONFIG,
+# on the login node and passes account, partition, LLB_ROOT, LLB_CONFIG,
 # PARENTS_DIR and OUT_DIR. Software locations come from config/hpc.env
 # (QUPKAKE_SETUP / QUPKAKE_ENV / QUPKAKE_EXE / XTBPATH), not from this file.
 #
@@ -33,20 +33,20 @@ FORCE="${FORCE:-0}"
 
 # ---- repo + config ------------------------------------------------------------
 # sbatch runs a spooled COPY of this script, so BASH_SOURCE cannot find the
-# repo. submit_qupkake.sh exports SMP_ROOT; SLURM_SUBMIT_DIR is the fallback.
+# repo. submit_qupkake.sh exports LLB_ROOT; SLURM_SUBMIT_DIR is the fallback.
 env_sh=""
-for d in "${SMP_ROOT:-}" "${SLURM_SUBMIT_DIR:-}" "${SLURM_SUBMIT_DIR:-}/.."; do
+for d in "${LLB_ROOT:-}" "${SLURM_SUBMIT_DIR:-}" "${SLURM_SUBMIT_DIR:-}/.."; do
     [[ -n "$d" && -f "$d/common/env.sh" ]] && { env_sh="$d/common/env.sh"; break; }
 done
 if [[ -z "$env_sh" ]]; then
-    echo "FATAL: common/env.sh not found under SMP_ROOT='${SMP_ROOT:-}' or" \
+    echo "FATAL: common/env.sh not found under LLB_ROOT='${LLB_ROOT:-}' or" \
          "SLURM_SUBMIT_DIR='${SLURM_SUBMIT_DIR:-}'. Submit with submit_qupkake.sh." >&2
     exit 2
 fi
 # shellcheck disable=SC1090
 source "$env_sh"
-smp_load_config
-SCRIPT="$SMP_ROOT/run_qupkake/qupkake_protomers.py"
+llb_load_config
+SCRIPT="$LLB_ROOT/run_qupkake/qupkake_protomers.py"
 [[ -f "$SCRIPT" ]] || { echo "FATAL: $SCRIPT missing" >&2; exit 2; }
 
 # ---- manifest integrity ------------------------------------------------------
@@ -88,8 +88,8 @@ if [[ -f "$out/DONE" && "$FORCE" != "1" ]]; then
 fi
 
 # ---- environment ---------------------------------------------------------------
-smp_activate QUPKAKE
-QK_EXE="$(smp_require_exe QUPKAKE_EXE qupkake)"
+llb_activate QUPKAKE
+QK_EXE="$(llb_require_exe QUPKAKE_EXE qupkake)"
 python -c 'import qupkake, rdkit' \
     || { echo "FATAL: env ${QUPKAKE_ENV} lacks qupkake or rdkit" >&2; exit 2; }
 export OMP_NUM_THREADS=1       # -mp supplies the parallelism; xtb must not also thread
@@ -111,7 +111,7 @@ python "$SCRIPT" "$shard" -o "$out" \
     echo "ph=$PH"; echo "margin=$MARGIN"; echo "min_population=$MIN_POP"
     echo "max_states=$MAX_STATES"
     echo "qupkake_exe=$QK_EXE"; echo "xtbpath=${XTBPATH:-bundled}"
-    echo "config=$SMP_CONFIG"
+    echo "config=$LLB_CONFIG"
     echo "finished=$(date -Is)"
 } > "$out/DONE"
 echo "done: $out"

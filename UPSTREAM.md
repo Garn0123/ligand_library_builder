@@ -45,15 +45,15 @@ in `sample_2d.py`'s docstring.
 ```bash
 python3 mol_download/sample_2d.py --heavy 14-28 --print-urls > urls_2d.txt  # 904 files, ~960 GB
 cd $ZINC_DATA                                     # scratch; files land under $PWD/zinc22/
-$SMP/mol_download/run.sh $SMP/urls_2d.txt 4       # DTN / tmux, ~5-19 h
-$SMP/mol_download/verify.sh --purge
-$SMP/mol_download/status.sh $SMP/urls_2d.txt      # re-run run.sh retry.txt 2 until retry = 0
-cd $SMP
+$LLB/mol_download/run.sh $LLB/urls_2d.txt 4       # DTN / tmux, ~5-19 h
+$LLB/mol_download/verify.sh --purge
+$LLB/mol_download/status.sh $LLB/urls_2d.txt      # re-run run.sh retry.txt 2 until retry = 0
+cd $LLB
 python3 mol_download/sample_2d.py --heavy 14-28 --local $ZINC_DATA/zinc22 \
     --urls urls_2d.txt --outdir samples
 ```
 
-(`$SMP` = this repo. `run.sh` takes `WGET` and `PARALLEL` from the config.)
+(`$LLB` = this repo. `run.sh` takes `WGET` and `PARALLEL` from the config.)
 
 `--local` is one reservoir pass over every file in the bin: every molecule
 equally likely, the logP mix right by construction, about 30 min for H28. With

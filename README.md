@@ -1,4 +1,4 @@
-# small_molecule_prep
+# ligand_library_builder
 
 Setting up a small-molecule library for docking: ZINC SMILES in, chunked
 DOCK-ready db2 out, every molecule carried under a name that survives the db2
@@ -19,8 +19,8 @@ elsewhere. This repo stops at chunked db2.
 ## Setup on a new machine
 
 ```bash
-git clone git@github.com:Garn0123/small_molecule_prep.git
-cd small_molecule_prep
+git clone git@github.com:Garn0123/ligand_library_builder.git
+cd ligand_library_builder
 cp config/hpc.env.example config/hpc.env      # then point it at QupKake, db2_converter, ...
 ```
 
@@ -42,7 +42,7 @@ politely, and the gotchas that actually happened),
 
 ## History
 
-This repo was `mol_compiler`. Its history is intact under `mol_compiler/`
+This repo was `mol_compiler`, then briefly `small_molecule_prep`. Its history is intact under `mol_compiler/`
 (`git log --follow mol_compiler/<file>`). `mol_download` and `run_qupkake` joined
 it on 2026-09-23, because the three run in sequence, share one naming contract,
 and change together.

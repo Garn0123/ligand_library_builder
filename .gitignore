@@ -183,7 +183,7 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 # ============================================================================
-# small_molecule_prep: code is tracked, data and run outputs never are.
+# ligand_library_builder: code is tracked, data and run outputs never are.
 # ============================================================================
 # Machine-specific tool paths (copy config/hpc.env.example).
 config/hpc.env

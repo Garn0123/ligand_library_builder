@@ -14,8 +14,8 @@ set -u
 # Tool paths (WGET, PARALLEL) and ZINC_DATA from config/hpc.env, if present.
 # Optional here: on a DTN with wget and parallel on PATH, no config is needed.
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # scripts; data lands in $PWD
-SMP_ROOT="${SMP_ROOT:-$(dirname "$HERE")}"
-cfg="${SMP_CONFIG:-$SMP_ROOT/config/hpc.env}"
+LLB_ROOT="${LLB_ROOT:-$(dirname "$HERE")}"
+cfg="${LLB_CONFIG:-$LLB_ROOT/config/hpc.env}"
 if [[ -f "$cfg" ]]; then
     # shellcheck disable=SC1090
     source "$cfg"

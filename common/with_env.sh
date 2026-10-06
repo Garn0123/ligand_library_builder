@@ -17,11 +17,11 @@ set -euo pipefail
 tool="$(tr '[:lower:]' '[:upper:]' <<<"$1")"; shift
 case "$tool" in QUPKAKE|DB2C|PREP) ;; *) echo "unknown TOOL '$tool' (QUPKAKE, DB2C, PREP)" >&2; exit 64 ;; esac
 
-SMP_ROOT="${SMP_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+LLB_ROOT="${LLB_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 # shellcheck source=common/env.sh
-source "$SMP_ROOT/common/env.sh"
-smp_load_config
-smp_activate "$tool"
+source "$LLB_ROOT/common/env.sh"
+llb_load_config
+llb_activate "$tool"
 [[ -n "${DB2C_SRC:-}" ]] && export DB2C_SRC
 [[ -n "${BUILD_LIGAND_EXE:-}" ]] && export BUILD_LIGAND_EXE
 exec "$@"
