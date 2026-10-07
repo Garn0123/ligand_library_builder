@@ -139,6 +139,16 @@ time common/with_env.sh QUPKAKE python run_qupkake/qupkake_protomers.py \
 cat preflight_out/qupkake_failed.tsv            # crashed molecules, now caught
 ```
 
+While it runs, a line every 60 s (`--progress-interval`) names the stage, since
+QupKake's own tqdm bars show only the molecule in hand. Stage 1 featurizes each
+molecule (xtb opt + Fukui) and predicts its sites; stage 2 runs once per
+predicted site (the molecule and its conjugate, re-featurized), so it usually
+dominates. When QupKake exits, a summary gives each stage's wall time:
+
+```
+  [qupkake timing] stage 1 featurize: 50/50 molecules in 0:08:55; stage 2 site pairs: 163/163 in 0:41:10; ...
+```
+
 The timing set is `parents/preflight.smi`: `prepare_parents.py --preflight N`
 picks N molecules (default 20) across heavy-atom counts, largest first, so it errs
 slow. For a small set, use the whole file (`--preflight 50` for 50 molecules).

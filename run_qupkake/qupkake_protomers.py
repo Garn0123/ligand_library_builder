@@ -180,8 +180,130 @@ def standardize(smi: str, neutralize: bool = True, largest_fragment: bool = True
 # --------------------------------------------------------------------------
 # QupKake invocation + parsing
 # --------------------------------------------------------------------------
+class QupKakeProgress:
+    """Periodic one-line progress for a running QupKake, read off its files.
+
+    QupKake's tqdm bars name only the molecule in hand, never the stage, and
+    render as carriage-return noise in a SLURM log. Its working tree says more,
+    in the same files audit_qupkake() reads:
+
+      stage 1  featurize molecules  processed/{name}.pt per molecule done
+                                    (xtb --opt --alpb water --lmo, + --vfukui)
+      stage 2  site pairs           raw/{output} = every predicted site (the
+                                    total); processed/{name}_{idx}_{type}_pair.pt
+                                    per site done (molecule + conjugate
+                                    re-featurized: ~4 xtb runs each)
+      errors                        'Error processing' lines in logs/error_log.txt
+
+    Prints a line every `interval` seconds and a per-stage timing summary at
+    the end -- the numbers a timing preflight is run for.
+    """
+
+    def __init__(self, root: Path, output: str, n_mols: int, interval: float):
+        import threading
+        self.root, self.output, self.n_mols, self.interval = root, output, n_mols, interval
+        self.stop = threading.Event()
+        self.thread = threading.Thread(target=self._loop, daemon=True)
+        self.t0 = self._now()
+        self.t_stage2 = None
+        self.base1, self.base2 = self._counts()[:2]   # work reused from an earlier run
+
+    @staticmethod
+    def _now() -> float:
+        # wall clock, so it compares with file mtimes: the stage boundary is
+        # when QupKake WROTE the site file, not when this loop next looked
+        import time
+        return time.time()
+
+    def _counts(self) -> tuple[int, int, int | None, int]:
+        proc = self.root / "processed"
+        mols = pairs = 0
+        if proc.is_dir():
+            for f in os.scandir(proc):
+                if not f.name.endswith(".pt") or f.name.startswith("pre_"):
+                    continue
+                if f.name.endswith("_pair.pt"):
+                    pairs += 1
+                else:
+                    mols += 1
+        raw = self.root / "raw" / self.output
+        sites = None
+        if raw.exists():
+            with open(raw, errors="replace") as fh:
+                sites = sum(1 for line in fh if line.startswith("$$$$"))
+        errs = 0
+        log = self.root / "logs" / "error_log.txt"
+        if log.exists():
+            with open(log, errors="replace") as fh:
+                errs = sum(1 for line in fh if "Error processing" in line)
+        return mols, pairs, sites, errs
+
+    @staticmethod
+    def _fmt(sec: float) -> str:
+        if sec < 60:
+            return f"{sec:.1f}s"
+        sec = int(round(sec))
+        return f"{sec // 3600}:{sec % 3600 // 60:02d}:{sec % 60:02d}"
+
+    def _rate(self, done: int, since: float) -> str:
+        if done <= 0:
+            return ""
+        per = (self._now() - since) / done
+        return f", {per:.1f} s/item"
+
+    def line(self) -> str:
+        mols, pairs, sites, errs = self._counts()
+        now = self._now()
+        if sites is None:
+            stage = (f"stage 1/2 featurize molecules {mols}/{self.n_mols}"
+                     f"{self._rate(mols - self.base1, self.t0)}")
+        else:
+            self._mark_stage2()
+            stage = (f"stage 1/2 done ({mols}/{self.n_mols}) | stage 2/2 site pairs "
+                     f"{pairs}/{sites}{self._rate(pairs - self.base2, self.t_stage2)}")
+            done = pairs - self.base2
+            if 0 < done < sites:
+                eta = (now - self.t_stage2) / done * (sites - pairs)
+                stage += f", ~{self._fmt(eta)} left"
+        err = f" | errors logged: {errs}" if errs else ""
+        return f"  [qupkake {self._fmt(now - self.t0)}] {stage}{err}"
+
+    def _mark_stage2(self):
+        if self.t_stage2 is None:
+            raw = self.root / "raw" / self.output
+            # a site file left by an earlier run predates t0: stage 2 starts now
+            self.t_stage2 = max(self.t0, raw.stat().st_mtime) if raw.exists() else self._now()
+
+    def _loop(self):
+        while not self.stop.wait(self.interval):
+            print(("\n" if sys.stderr.isatty() else "") + self.line(),
+                  file=sys.stderr, flush=True)
+
+    def __enter__(self):
+        if self.interval > 0:
+            self.thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self.stop.set()
+        if self.thread.is_alive():
+            self.thread.join()
+        mols, pairs, sites, errs = self._counts()
+        end = self._now()
+        if sites is not None:
+            self._mark_stage2()
+        s1_end = self.t_stage2 if self.t_stage2 is not None else end
+        print(f"  [qupkake timing] stage 1 featurize: {mols}/{self.n_mols} molecules "
+              f"in {self._fmt(s1_end - self.t0)}; stage 2 site pairs: {pairs}/"
+              f"{sites if sites is not None else 0} in "
+              f"{self._fmt(end - s1_end)}; total {self._fmt(end - self.t0)}; "
+              f"errors logged {errs}", file=sys.stderr, flush=True)
+        return False
+
+
 def run_qupkake(csv_path: Path, root: Path, output: str, tautomerize: bool,
-                nproc: int | None, exe: str = "qupkake") -> Path:
+                nproc: int | None, exe: str = "qupkake",
+                n_mols: int = 0, progress_interval: float = 60) -> Path:
     cmd = [exe, "file", str(csv_path),
            "-o", output,
            "-s", "smiles",
@@ -192,7 +314,8 @@ def run_qupkake(csv_path: Path, root: Path, output: str, tautomerize: bool,
     if nproc:
         cmd += ["-mp", str(nproc)]
     print("  $ " + " ".join(shlex.quote(c) for c in cmd))
-    res = subprocess.run(cmd)
+    with QupKakeProgress(root, output, n_mols, progress_interval):
+        res = subprocess.run(cmd)
     if res.returncode != 0:
         raise RuntimeError(f"qupkake exited with status {res.returncode}")
     out = root / "output" / output
@@ -718,6 +841,9 @@ def main(argv=None):
     ap.add_argument("--keep-largest-fragment", action="store_true", default=True)
     ap.add_argument("-t", "--tautomerize", action="store_true",
                     help="pass -t to QupKake (xtb tautomer search; much slower)")
+    ap.add_argument("--progress-interval", type=float, default=60,
+                    help="seconds between QupKake stage/progress lines on stderr "
+                         "(0 = off); a per-stage timing summary is always printed")
     ap.add_argument("-mp", "--nproc", type=int, default=None,
                     help="QupKake multiprocessing workers")
     ap.add_argument("--qupkake-exe", default="qupkake")
@@ -798,7 +924,9 @@ def main(argv=None):
             w.writerow(["smiles", "name"])
             w.writerows([[s, n] for s, n in inputs])
         sdf_path = run_qupkake(csv_path, work, "qupkake_output.sdf",
-                               args.tautomerize, args.nproc, args.qupkake_exe)
+                               args.tautomerize, args.nproc, args.qupkake_exe,
+                               n_mols=len(inputs),
+                               progress_interval=args.progress_interval)
 
     grouped = parse_qupkake_sdf(sdf_path)
     n_records = sum(len(s) for _, s in grouped.values())
