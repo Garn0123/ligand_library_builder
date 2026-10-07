@@ -25,7 +25,13 @@ net formal charge you asked for.
 
 Usage
 -----
-    python verify_db2_build.py protomers/protomers.csv --outputpath example/
+    python verify_db2_build.py library/library.tsv --outputpath db2_run/out
+    (or protomers.csv; --outputpath is searched recursively, and every
+    *.faillist under it is read unless --faillist is given)
+
+Exit 1 on a charge mismatch, a renamed or mangled name, or a molecule MISSING
+with no faillist entry -- a silent loss. Molecules build_ligand reported as
+failed are BUILD_FAILED: recorded attrition, not a failed run.
 """
 
 from __future__ import annotations
@@ -73,9 +79,11 @@ def main(argv=None) -> int:
     ap.add_argument("protomers_csv",
                     help="protomers.csv (qupkake_protomers.py) or library.tsv (assign_names.py)")
     ap.add_argument("--outputpath", required=True,
-                    help="db2_converter --outputpath directory")
-    ap.add_argument("--faillist", default=None,
-                    help="optional .faillist written by build_ligand")
+                    help="db2_converter --outputpath, or a submit_db2.sh run's out/ "
+                         "(searched recursively)")
+    ap.add_argument("--faillist", action="append", default=[],
+                    help=".faillist written by build_ligand (repeatable); default: "
+                         "every *.faillist under --outputpath")
     ap.add_argument("--charge-tol", type=float, default=0.05,
                     help="tolerance when comparing AMSOL charge to formal charge")
     ap.add_argument("-o", "--report", default="db2_verification.csv")
@@ -92,8 +100,23 @@ def main(argv=None) -> int:
                     for r in csv.DictReader(fh, delimiter="\t" if tsv else ",")]
 
     fail_reasons: dict[str, str] = {}
-    if args.faillist and Path(args.faillist).exists():
-        for line in Path(args.faillist).read_text().splitlines():
+    # One index over the whole tree: a submit_db2.sh run keeps each shard's
+    # results in out/NNNN/, and globbing per name would be N directory scans.
+    all_db2 = sorted(outdir.rglob("*.db2.gz"))
+    exact_index: dict[str, list[Path]] = {}
+    split_index: dict[str, list[Path]] = {}
+    for f in all_db2:
+        stem = f.name[:-len(".db2.gz")]
+        exact_index.setdefault(stem, []).append(f)
+        m = re.match(r"^(.*)\.\d+$", stem)        # --checkstereo split: NAME.0, NAME.1
+        if m:
+            split_index.setdefault(m.group(1), []).append(f)
+
+    faillists = [Path(f) for f in args.faillist] or sorted(outdir.rglob("*.faillist"))
+    for fl in faillists:
+        if not fl.exists():
+            continue
+        for line in fl.read_text().splitlines():
             parts = line.split("\t")
             if len(parts) >= 4:
                 fail_reasons[parts[1]] = parts[3]
@@ -104,17 +127,22 @@ def main(argv=None) -> int:
         want_q = int(exp["net_charge"])
 
         # --checkstereo splits unspecified stereocentres into NAME.0, NAME.1 ...
-        exact = sorted(outdir.glob(f"{name}.db2.gz"))
-        hits = exact or sorted(outdir.glob(f"{name}.[0-9]*.db2.gz"))
+        exact = exact_index.get(name, [])
+        hits = exact or split_index.get(name, [])
         # A contract name (NAMING_CONTRACT.md) must reach the db2 unchanged: a
         # .N suffix makes it 18 characters and mol2db2 keeps only the last 16.
         contract = CONTRACT.match(name) is not None
 
         if not hits:
-            tally["missing"] += 1
+            # A failure build_ligand reported is attrition, recorded and
+            # expected; a molecule gone with no reason anywhere is a silent
+            # loss, and only that fails the run.
+            reported = name in fail_reasons
+            tally["build_failed" if reported else "missing"] += 1
             rows.append({"protomer_name": name, "parent": exp["parent_name"],
-                         "expected_charge": want_q, "status": "MISSING",
-                         "detail": fail_reasons.get(name, "no db2 produced"),
+                         "expected_charge": want_q,
+                         "status": "BUILD_FAILED" if reported else "MISSING",
+                         "detail": fail_reasons.get(name, "no db2 and no faillist entry"),
                          "db2_file": "", "db2_name": "", "amsol_charge": ""})
             continue
 
@@ -152,7 +180,7 @@ def main(argv=None) -> int:
 
     # db2 files present that nothing asked for
     wanted = {r["protomer_name"] for r in expected}
-    for f in outdir.glob("*.db2.gz"):
+    for f in all_db2:
         stem = f.name[:-len(".db2.gz")]
         if stem not in wanted and stem.rsplit(".", 1)[0] not in wanted:
             tally["unexpected"] += 1
@@ -175,7 +203,7 @@ def main(argv=None) -> int:
     print("DB2 BUILD VERIFICATION")
     print("=" * 56)
     print(f"  requested protomers          {len(expected)}")
-    for k in ["ok", "missing", "empty", "charge_mismatch", "renamed",
+    for k in ["ok", "build_failed", "missing", "empty", "charge_mismatch", "renamed",
               "name_mismatch", "unreadable", "unexpected"]:
         print(f"  {k:<28} {tally[k]}")
     if collisions:
@@ -186,6 +214,9 @@ def main(argv=None) -> int:
         print("\n  build_ligand failure reasons:")
         for reason, n in Counter(fail_reasons.values()).items():
             print(f"    {reason:<20} {n}")
+    if tally["missing"]:
+        print(f"\n  !! {tally['missing']} molecule(s) have no db2 and no faillist entry: "
+              f"a silent loss (killed task? wrong --outputpath?). See {args.report}.")
     print(f"\n  -> {args.report}\n")
 
     return 1 if (tally["missing"] or tally["charge_mismatch"] or tally["renamed"]

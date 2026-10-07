@@ -6,6 +6,7 @@ format (`NAMING_CONTRACT.md` in the DRAP project, enforced here by
 `run_qupkake/assign_names.py`).
 
 ```
+bin/llb         one command for every step; put bin/ on PATH and run from any run directory
 mol_download/   ZINC22 tranches: fetch (run.sh), verify, and sample N per heavy-atom bin
 run_qupkake/    parents -> QupKake micro-pKa -> protomers -> contract names -> db2 checks
 mol_compiler/   db2 -> load-balanced chunks + manifest, the unit of work for docking
@@ -22,6 +23,7 @@ elsewhere. This repo stops at chunked db2.
 git clone git@github.com:Garn0123/ligand_library_builder.git
 cd ligand_library_builder
 cp config/hpc.env.example config/hpc.env      # then point it at QupKake, db2_converter, ...
+export PATH=$PWD/bin:$PATH                     # then: cd to a run directory, `llb help`
 ```
 
 Environments are separate on purpose: QupKake pins `xtb 6.4.1` and its own

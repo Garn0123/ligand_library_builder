@@ -6,6 +6,9 @@
 #   run_qupkake/submit_qupkake.sh parents protomers
 #   run_qupkake/submit_qupkake.sh parents protomers --time=04:00:00   # extra sbatch args
 #
+# SLURM logs go to ./logs of the directory you run this from (or $LLB_LOGDIR),
+# so the repo stays read-only.
+#
 # The preflight activates the configured QupKake env HERE and checks that the
 # CLI, the Python package and XTBPATH all resolve, so a wrong path fails once on
 # the login node instead of once per array task. Resubmitting resumes: finished
@@ -45,10 +48,12 @@ echo "== preflight (config: $LLB_CONFIG)"
   fi
 ) || exit 2
 
-mkdir -p "$LLB_ROOT/run_qupkake/logs"
-cd "$LLB_ROOT/run_qupkake"          # #SBATCH --output=logs/... is relative to here
+# Logs go to the run directory you submit from, never into the repo.
+LOGDIR="${LLB_LOGDIR:-$PWD/logs}"
+mkdir -p "$LOGDIR"
 echo "== submitting $N shard(s), account=$LLB_ACCOUNT partition=$LLB_PARTITION"
 sbatch -A "$LLB_ACCOUNT" -p "$LLB_PARTITION" \
     --array="0-$((N - 1))%${LLB_ARRAY_PARALLEL:-50}" \
     --export=ALL,LLB_ROOT="$LLB_ROOT",LLB_CONFIG="$LLB_CONFIG",PARENTS_DIR="$PARENTS_DIR",OUT_DIR="$OUT_DIR" \
-    "$@" slurm/qupkake_array.sbatch
+    --output="$LOGDIR/qupkake_%A_%a.out" \
+    "$@" "$LLB_ROOT/run_qupkake/slurm/qupkake_array.sbatch"

@@ -1,0 +1,74 @@
+#!/bin/bash
+# llb -- run any ligand_library_builder step from any directory.
+#
+# Keep the code in one place (e.g. /nfs/turbo/umms-maom/johnbick/opt/ligand_library_builder)
+# and put this on PATH; every step then reads and writes relative to your
+# CURRENT directory, so each run lives in its own run directory and the code
+# checkout is never written to:
+#
+#   export PATH=/path/to/opt/ligand_library_builder/bin:$PATH     # e.g. in ~/.bashrc
+#   export LLB_CONFIG=$HOME/.config/llb/hpc.env                    # optional; default
+#                                                                  #   <repo>/config/hpc.env
+#   mkdir -p /scratch/.../my_run && cd /scratch/.../my_run
+#   llb parents my_ligands.smi.gz -o parents
+#
+# Each step runs inside the environment config/hpc.env names for it.
+#
+# Steps, in pipeline order:
+#   llb print-urls ARGS       mol_download/sample_2d.py --print-urls     (no env)
+#   llb extract-urls FILE...  mol_download/extract_urls.sh               (no env)
+#   llb fetch LIST [J]        mol_download/run.sh  (files land under $PWD)
+#   llb fetch-verify [--purge]  /  llb fetch-status LIST
+#   llb sample ARGS           mol_download/sample_2d.py                  (no env)
+#   llb parents ARGS          run_qupkake/prepare_parents.py             (PREP)
+#   llb qupkake ARGS          run_qupkake/qupkake_protomers.py           (QUPKAKE)
+#   llb submit-qupkake PARENTS OUT [sbatch args]                         (logs -> ./logs)
+#   llb names ARGS            run_qupkake/assign_names.py                (PREP)
+#   llb check-stereo SMI      run_qupkake/check_db2_stereo.py            (DB2C)
+#   llb submit-db2 RUNDIR SMI [opts] [-- sbatch args]                    (run_qupkake/submit_db2.sh)
+#   llb verify-db2 ARGS       run_qupkake/verify_db2_build.py            (DB2C)
+#   llb mol2 ARGS             run_qupkake/db2_to_mol2.py                 (DOCK)
+#
+# Utilities:
+#   llb env TOOL CMD...       run CMD in TOOL's env (QUPKAKE, DB2C, PREP, DOCK)
+#   llb root                  print the code checkout this llb belongs to
+#   llb help                  this text
+
+set -euo pipefail
+
+# Resolve symlinks so a link to bin/llb (e.g. from ~/bin) still finds the repo.
+src="${BASH_SOURCE[0]}"
+while [[ -L "$src" ]]; do
+    dir="$(cd "$(dirname "$src")" && pwd)"
+    src="$(readlink "$src")"; [[ "$src" == /* ]] || src="$dir/$src"
+done
+LLB_ROOT="$(cd "$(dirname "$src")/.." && pwd)"
+export LLB_ROOT
+
+usage() { sed -n '2,/^$/p' "$LLB_ROOT/bin/llb" | sed 's/^# \{0,1\}//'; }
+
+step="${1:-help}"; [[ $# -gt 0 ]] && shift
+W="$LLB_ROOT/common/with_env.sh"
+Q="$LLB_ROOT/run_qupkake"
+D="$LLB_ROOT/mol_download"
+
+case "$step" in
+    print-urls)     exec python3 "$D/sample_2d.py" --print-urls "$@" ;;
+    extract-urls)   exec "$D/extract_urls.sh" "$@" ;;
+    fetch)          exec "$D/run.sh" "$@" ;;
+    fetch-verify)   exec "$D/verify.sh" "$@" ;;
+    fetch-status)   exec "$D/status.sh" "$@" ;;
+    sample)         exec python3 "$D/sample_2d.py" "$@" ;;
+    parents)        exec "$W" PREP python "$Q/prepare_parents.py" "$@" ;;
+    qupkake)        exec "$W" QUPKAKE python "$Q/qupkake_protomers.py" "$@" ;;
+    submit-qupkake) exec "$Q/submit_qupkake.sh" "$@" ;;
+    names)          exec "$W" PREP python "$Q/assign_names.py" "$@" ;;
+    check-stereo)   exec "$W" DB2C python "$Q/check_db2_stereo.py" "$@" ;;
+    submit-db2)     exec "$Q/submit_db2.sh" "$@" ;;
+    verify-db2)     exec "$W" DB2C python "$Q/verify_db2_build.py" "$@" ;;
+    mol2)           exec "$W" DOCK python3 "$Q/db2_to_mol2.py" "$@" ;;
+    env)            exec "$W" "$@" ;;
+    root)           echo "$LLB_ROOT" ;;
+    help|-h|--help) usage ;;
+    *) echo "llb: unknown step '$step'" >&2; usage >&2; exit 64 ;;
+esac

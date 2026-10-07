@@ -34,6 +34,36 @@ common/with_env.sh DB2C  python run_qupkake/check_db2_stereo.py ...  # db2_conve
 
 All commands below run from the repo root.
 
+### Code in one place, runs anywhere
+
+Keep the checkout in `opt/` and never run inside it. `bin/llb` runs any step,
+in the right environment, against your **current** directory:
+
+```bash
+export PATH=/nfs/turbo/umms-maom/johnbick/opt/ligand_library_builder/bin:$PATH   # ~/.bashrc
+export LLB_CONFIG=~/.config/llb/hpc.env      # optional: config outside the checkout too
+mkdir -p /scratch/.../ladder_h14_h28 && cd /scratch/.../ladder_h14_h28
+llb help                                      # every step, in pipeline order
+```
+
+Every output path is relative to where you run it, and SLURM logs go to
+`./logs`, so one run directory holds one run and the checkout stays read-only.
+`llb root` prints which checkout you're using. Each db2 build records its
+commit, uncommitted changes and config in `provenance.<jobid>.txt`.
+
+| step | `llb` | script |
+| --- | --- | --- |
+| URL list | `llb print-urls` / `llb extract-urls` | `mol_download/sample_2d.py` / `extract_urls.sh` |
+| download | `llb fetch`, `llb fetch-verify`, `llb fetch-status` | `mol_download/run.sh`, `verify.sh`, `status.sh` |
+| sample | `llb sample` | `mol_download/sample_2d.py` |
+| parents | `llb parents` | `run_qupkake/prepare_parents.py` |
+| QupKake | `llb qupkake`, `llb submit-qupkake` | `qupkake_protomers.py`, `submit_qupkake.sh` |
+| names | `llb names`, `llb check-stereo` | `assign_names.py`, `check_db2_stereo.py` |
+| db2 build | `llb submit-db2`, `llb verify-db2` | `submit_db2.sh` + `slurm/db2_array.sbatch`, `verify_db2_build.py` |
+| mol2 | `llb mol2` | `db2_to_mol2.py` |
+
+The commands below show the scripts by path; `llb <step>` is the same thing.
+
 ## 1. Download and sample
 
 **Production: download the bins, then sample uniformly from disk.** Streaming a
@@ -157,17 +187,28 @@ db2_converter's exact options and gives each isomer its own stereo index.
 ## 5. Before and after the build
 
 ```bash
-common/with_env.sh DB2C python run_qupkake/check_db2_stereo.py library/library.smi
+llb check-stereo library/library.smi
 
-# your db2_array.sbatch, with library/library.smi as input and these flags
-# (db2_converter notebook, 2026-08-27):
-#   OMP_NUM_THREADS=1 build_ligand -i <shard>.smi -n 600 --keep_max_conf \
-#       -m conformator --checkstereo --reseth --rotateh --dock38 \
-#       --workingpath $d --outputpath $d
+# build: creates RUNDIR (config.env, shards/, out/, logs/), preflights db2_converter
+# on this node, submits slurm/db2_array.sbatch -- John's 2026-08-27 script, with its
+# environment now taken from DB2C_SETUP / DB2C_ENV / BUILD_LIGAND_EXE
+llb submit-db2 db2_run library/library.smi --ncpus 36 --nshards 360 -- --time=48:00:00
 
-common/with_env.sh DB2C python run_qupkake/verify_db2_build.py library/library.tsv \
-    --outputpath $d --faillist $d/library.smi.conformator.faillist
+# resubmit the same command to resume; then
+llb verify-db2 library/library.tsv --outputpath db2_run/out
 ```
+
+Defaults follow the db2_converter notebook (2026-08-27): `-m conformator`,
+`-n 600 --keep_max_conf --checkstereo --reseth --rotateh --dock38`, MMFF off,
+round-robin shards. `--method`, `--nconf`, `--mmff on`, `--ncpus`, `--nshards`,
+`--mem-per-cpu` and `--time` override them. Each array task runs `NCPUS` builds on
+node-local scratch, rsyncs back every 15 minutes, and refuses to start if
+singularity, build_ligand, RDKit or AMSOL's libraries are missing.
+
+A run directory belongs to one library. Resubmitting resumes without re-splitting.
+Pointing it at a different library is refused. `verify-db2` reads every shard's
+faillist: molecules build_ligand reported failing are `BUILD_FAILED` (attrition,
+recorded), and only a molecule missing with **no** reason fails the run.
 
 Keep `--checkstereo`. It's required anyway, since without it every chiral
 ligand fails `chemistrycheck`, and your notebook's corollary ("every
@@ -226,10 +267,9 @@ zero-padded ZINC22 id produces.
 
 ## What is not done here
 
-- **The db2 build script is not in this repo.** `db2_array.sbatch` (with its
-  preflight and provenance capture) lives on Great Lakes. Bring it into
-  `run_qupkake/slurm/` and have it read `DB2C_SETUP` / `DB2C_ENV` /
-  `BUILD_LIGAND_EXE` from `config/hpc.env`, like the QupKake array does.
+- **mol_compiler's `submit.slurm`** still has its own edit-in-place config
+  block (paths, account), so running it means editing the checkout. Convert it
+  to take a run directory like `submit_db2.sh`.
 - **Identity-group dedupe** (`stage4/make_split.py`, SIZE_LADDER_SPEC §3) runs
   on the DRAP side.
 - db2_converter is pinned at `hnlab/db2_converter@63d6656` in `DEPENDENCIES.md`.
