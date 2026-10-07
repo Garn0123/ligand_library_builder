@@ -56,9 +56,12 @@ python qupkake_protomers.py ligands.smi \
     --ph 6.4 7.4 8.4 \
     --margin 1.0 \
     --min-population 0.01 \
-    --max-states 8 \
-    -mp 8
+    --max-states 8
 ```
+
+Leave `-mp` at its default of 1. QupKake gives each of its N workers an N-thread
+xtb, so `-mp 8` runs 64 threads on 8 cores. Parallelise by running more
+processes (the SLURM array does this), not by raising `-mp`.
 
 Input is `SMILES name`, whitespace-separated, no header — the same format the
 DOCK 3D pipeline expects.

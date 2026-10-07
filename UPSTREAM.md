@@ -99,7 +99,7 @@ prove the plumbing end to end, never for results.
 
 ```bash
 common/with_env.sh PREP python run_qupkake/prepare_parents.py samples/H*.smi \
-    -o parents --shard-size 250
+    -o parents --shard-size 50
 ```
 
 Neutralizes with the same `standardize` QupKake's wrapper uses, and dedupes by
@@ -129,15 +129,22 @@ collide. Your original name is kept as `input_name` in `parents.tsv` and
 
 ## 3. QupKake
 
-Preflight first, interactively, on real hardware. QupKake's per-molecule time
-isn't known yet, and xtb cost grows with size:
+Preflight first, interactively, on real hardware, on **one core**: that's how
+the array runs. QupKake's `-mp N` gives each of N workers an N-thread xtb (N²
+threads on N cores; measured on Great Lakes as a load of ~82 on an 8-core job),
+and the QupKake paper itself recommends separate single-core runs in parallel. So
+each array task gets 1 CPU, and parallelism comes from many small shards.
+`llb qupkake` defaults to `-mp 1` with single-threaded xtb.
 
 ```bash
-srun -A maom99 -p standard -c 8 --mem 16G -t 1:00:00 --pty bash
-time common/with_env.sh QUPKAKE python run_qupkake/qupkake_protomers.py \
-    parents/preflight.smi -o preflight_out --name-style index -mp 8
+srun -A maom99 -p standard -c 1 --mem 4G -t 4:00:00 --pty bash
+time llb qupkake parents/preflight.smi -o preflight_out --name-style index
 cat preflight_out/qupkake_failed.tsv            # crashed molecules, now caught
 ```
+
+Use a fresh `-o` for every timing run (QupKake reuses finished work in an existing
+one), and don't `pkill` anything while it runs: a killed run reports its
+interrupted molecules as failures.
 
 While it runs, a line every 60 s (`--progress-interval`) names the stage, since
 QupKake's own tqdm bars show only the molecule in hand. Stage 1 featurizes each
@@ -151,10 +158,12 @@ dominates. When QupKake exits, a summary gives each stage's wall time:
 
 The timing set is `parents/preflight.smi`: `prepare_parents.py --preflight N`
 picks N molecules (default 20) across heavy-atom counts, largest first, so it errs
-slow. For a small set, use the whole file (`--preflight 50` for 50 molecules).
-CPU-seconds per molecule ≈ `real` × 8 / N, and one shard takes about
-shard size × CPU-s per molecule / 8. Scale `--shard-size` and `--time` from that,
-with ~2× headroom, then:
+slow. On one core, keep N to ~10–20 for expensive chemistry.
+Seconds per molecule ≈ `real` / N, and one shard takes about shard size × that.
+Cost is linear in sites (about 2 + 4 × sites xtb runs per molecule), so
+many-site molecules dominate. Scale `--shard-size` (default 50) and `--time` from
+that with ~2× headroom, and raise `LLB_ARRAY_PARALLEL` in `hpc.env`: 1-core tasks
+pack many to a node. Then:
 
 ```bash
 run_qupkake/submit_qupkake.sh parents protomers                 # + any sbatch args, e.g. --time=04:00:00

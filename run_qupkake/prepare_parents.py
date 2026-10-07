@@ -38,7 +38,7 @@ Does not do fingerprint/identity-group dedupe (SIZE_LADDER_SPEC.md 3); that is
 stage4/make_split.py's grouping and belongs on the DRAP side.
 
 Usage:
-    python prepare_parents.py samples/H*.smi -o parents --shard-size 250
+    python prepare_parents.py samples/H*.smi -o parents --shard-size 50
     python prepare_parents.py my_ligands.smi.gz other.smi -o parents     # your own
 """
 from __future__ import annotations
@@ -80,8 +80,9 @@ def main(argv=None) -> int:
     ap.add_argument("inputs", nargs="+",
                     help="'SMILES NAME' files, plain or .gz, e.g. samples/H17.smi")
     ap.add_argument("-o", "--outdir", default="parents")
-    ap.add_argument("--shard-size", type=int, default=250,
-                    help="parents per QupKake array task")
+    ap.add_argument("--shard-size", type=int, default=50,
+                    help="parents per QupKake array task; each task is ONE core, so "
+                         "size from the timing preflight (s/molecule x shard size)")
     ap.add_argument("--seed", type=int, default=20260923)
     ap.add_argument("--preflight", type=int, default=20,
                     help="parents, spread across bins, written to preflight.smi")

@@ -9,6 +9,9 @@
 # SLURM logs go to ./logs of the directory you run this from (or $LLB_LOGDIR),
 # so the repo stays read-only.
 #
+# Each task gets 1 CPU and 4G (LLB_QUPKAKE_MEM to change); concurrency per array
+# is LLB_ARRAY_PARALLEL from config/hpc.env -- with 1-core tasks, raise it.
+#
 # The preflight activates the configured QupKake env HERE and checks that the
 # CLI, the Python package and XTBPATH all resolve, so a wrong path fails once on
 # the login node instead of once per array task. Resubmitting resumes: finished
@@ -51,9 +54,22 @@ echo "== preflight (config: $LLB_CONFIG)"
 # Logs go to the run directory you submit from, never into the repo.
 LOGDIR="${LLB_LOGDIR:-$PWD/logs}"
 mkdir -p "$LOGDIR"
-echo "== submitting $N shard(s), account=$LLB_ACCOUNT partition=$LLB_PARTITION"
-sbatch -A "$LLB_ACCOUNT" -p "$LLB_PARTITION" \
-    --array="0-$((N - 1))%${LLB_ARRAY_PARALLEL:-50}" \
-    --export=ALL,LLB_ROOT="$LLB_ROOT",LLB_CONFIG="$LLB_CONFIG",PARENTS_DIR="$PARENTS_DIR",OUT_DIR="$OUT_DIR" \
-    --output="$LOGDIR/qupkake_%A_%a.out" \
-    "$@" "$LLB_ROOT/run_qupkake/slurm/qupkake_array.sbatch"
+# One core per task (see qupkake_array.sbatch), so a library is many small
+# tasks -- possibly more than SLURM's MaxArraySize, which bounds array INDICES.
+# Larger libraries go out as several arrays, each told its shard offset.
+max_array="$(scontrol show config 2>/dev/null | awk -F= '/^MaxArraySize/{gsub(/ /,"",$2); print $2}')"
+[[ "$max_array" =~ ^[0-9]+$ ]] || max_array=1001          # SLURM's default
+LLB_SHARD_OFFSET=0
+n_arrays=$(( (N + max_array - 1) / max_array ))
+echo "== submitting $N shard(s) as $n_arrays array(s) (MaxArraySize $max_array), 1 CPU each,"
+echo "   account=$LLB_ACCOUNT partition=$LLB_PARTITION, <= ${LLB_ARRAY_PARALLEL:-50} running per array"
+while (( LLB_SHARD_OFFSET < N )); do
+    n=$(( N - LLB_SHARD_OFFSET )); (( n > max_array )) && n=$max_array
+    sbatch -A "$LLB_ACCOUNT" -p "$LLB_PARTITION" \
+        --cpus-per-task=1 --mem="${LLB_QUPKAKE_MEM:-4G}" \
+        --array="0-$((n - 1))%${LLB_ARRAY_PARALLEL:-50}" \
+        --export=ALL,LLB_ROOT="$LLB_ROOT",LLB_CONFIG="$LLB_CONFIG",PARENTS_DIR="$PARENTS_DIR",OUT_DIR="$OUT_DIR",LLB_SHARD_OFFSET="$LLB_SHARD_OFFSET" \
+        --output="$LOGDIR/qupkake_%A_%a.out" \
+        "$@" "$LLB_ROOT/run_qupkake/slurm/qupkake_array.sbatch"
+    LLB_SHARD_OFFSET=$(( LLB_SHARD_OFFSET + n ))
+done

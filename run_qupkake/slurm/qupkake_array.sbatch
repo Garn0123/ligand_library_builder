@@ -2,12 +2,20 @@
 #SBATCH --job-name=qupkake
 #SBATCH --account=maom99
 #SBATCH --partition=standard
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=16G
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=4G
 #SBATCH --time=12:00:00
 #SBATCH --output=logs/qupkake_%A_%a.out
 #
-# One QupKake + protomer-enumeration task per parent shard.
+# One QupKake + protomer-enumeration task per parent shard, on ONE core.
+#
+# Why one core: QupKake's -mp N starts N workers AND passes -P N to each xtb,
+# so -mp 8 on 8 cores runs ~64 xtb threads (measured on Great Lakes: 8 xtb
+# processes pinned at ~100% each, load ~82). xtb also scales poorly on
+# molecules this small, and the QupKake paper concludes it is "more effective
+# to run separate QupKake calculations in parallel rather than dedicating many
+# cores to each" (JCTC 2024, 20, 6946, sec. 3.3). So: -mp 1, single-threaded
+# xtb, and parallelism from more array tasks with smaller shards.
 #
 # Submit with run_qupkake/submit_qupkake.sh, which preflights the QupKake env
 # on the login node and passes account, partition, LLB_ROOT, LLB_CONFIG,
@@ -69,7 +77,9 @@ if [[ "$have" != "$want" ]]; then
     exit 2
 fi
 
-IDX="${SLURM_ARRAY_TASK_ID:?run as an array task, or set SLURM_ARRAY_TASK_ID}"
+# submit_qupkake.sh splits libraries larger than SLURM's MaxArraySize into
+# several arrays; each carries the shard number its index 0 stands for.
+IDX=$(( ${LLB_SHARD_OFFSET:-0} + ${SLURM_ARRAY_TASK_ID:?run as an array task, or set SLURM_ARRAY_TASK_ID} ))
 row="$(awk -F'\t' -v i="$IDX" 'NR>1 && $1==i' "$MANIFEST")"
 [[ -n "$row" ]] || { echo "FATAL: index $IDX not in $MANIFEST" >&2; exit 2; }
 shard="$PARENTS_DIR/$(cut -f2 <<<"$row")"
@@ -92,8 +102,12 @@ llb_activate QUPKAKE
 QK_EXE="$(llb_require_exe QUPKAKE_EXE qupkake)"
 python -c 'import qupkake, rdkit' \
     || { echo "FATAL: env ${QUPKAKE_ENV} lacks qupkake or rdkit" >&2; exit 2; }
-export OMP_NUM_THREADS=1       # -mp supplies the parallelism; xtb must not also thread
+export OMP_NUM_THREADS=1       # one core: xtb --vfukui and torch must not thread either
 export MKL_NUM_THREADS=1
+if [[ "${SLURM_CPUS_PER_TASK:-1}" -gt 1 ]]; then
+    echo "NOTE: ${SLURM_CPUS_PER_TASK} CPUs allocated but QupKake runs with -mp 1;" \
+         "the extra cores are idle. Use more, smaller shards instead." >&2
+fi
 
 echo "shard $IDX  $(wc -l < "$shard") parents  host $(hostname)  $(date -Is)"
 rm -rf "$out"
@@ -101,7 +115,7 @@ mkdir -p "$out"
 # shellcheck disable=SC2086  # PH is a deliberate word list
 python "$SCRIPT" "$shard" -o "$out" \
     --ph $PH --margin "$MARGIN" --min-population "$MIN_POP" --max-states "$MAX_STATES" \
-    --stereo carry --name-style index -mp "${SLURM_CPUS_PER_TASK:-1}" \
+    --stereo carry --name-style index -mp 1 \
     --qupkake-exe "$QK_EXE"
 
 [[ -s "$out/protomers.csv" ]] || { echo "FATAL: no protomers.csv written" >&2; exit 1; }

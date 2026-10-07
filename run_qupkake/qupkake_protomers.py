@@ -315,7 +315,10 @@ def run_qupkake(csv_path: Path, root: Path, output: str, tautomerize: bool,
         cmd += ["-mp", str(nproc)]
     print("  $ " + " ".join(shlex.quote(c) for c in cmd))
     with QupKakeProgress(root, output, n_mols, progress_interval):
-        res = subprocess.run(cmd)
+        # xtb --vfukui takes no -P and torch sizes itself to the node, so
+        # pin them; -mp/-P already sets xtb's main calculation.
+        env = dict(os.environ, OMP_NUM_THREADS="1", MKL_NUM_THREADS="1")
+        res = subprocess.run(cmd, env=env)
     if res.returncode != 0:
         raise RuntimeError(f"qupkake exited with status {res.returncode}")
     out = root / "output" / output
@@ -844,8 +847,11 @@ def main(argv=None):
     ap.add_argument("--progress-interval", type=float, default=60,
                     help="seconds between QupKake stage/progress lines on stderr "
                          "(0 = off); a per-stage timing summary is always printed")
-    ap.add_argument("-mp", "--nproc", type=int, default=None,
-                    help="QupKake multiprocessing workers")
+    ap.add_argument("-mp", "--nproc", type=int, default=1,
+                    help="QupKake workers. Keep 1: QupKake also passes -P N to every "
+                         "xtb, so N workers run N*N threads; parallelise with more "
+                         "processes (array tasks) instead. Unset in QupKake itself, "
+                         "this would be every core on the node.")
     ap.add_argument("--qupkake-exe", default="qupkake")
     ap.add_argument("--from-sdf", default=None,
                     help="reuse an existing QupKake output SDF; skip prediction")
@@ -917,6 +923,11 @@ def main(argv=None):
         print(f"[2/5] reusing {sdf_path}")
     else:
         print(f"[2/5] running QupKake on {len(inputs)} molecule(s)")
+        if args.nproc and args.nproc > 1:
+            print(f"  ! -mp {args.nproc}: QupKake gives each of its {args.nproc} workers a "
+                  f"{args.nproc}-thread xtb, so {args.nproc * args.nproc} threads compete "
+                  f"for {args.nproc} cores. -mp 1 and more processes is faster.",
+                  file=sys.stderr)
         work.mkdir(parents=True, exist_ok=True)
         csv_path = work / "qupkake_input.csv"
         with open(csv_path, "w", newline="") as fh:
