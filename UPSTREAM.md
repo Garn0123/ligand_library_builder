@@ -61,6 +61,7 @@ commit, uncommitted changes and config in `provenance.<jobid>.txt`.
 | names | `llb names`, `llb check-stereo` | `assign_names.py`, `check_db2_stereo.py` |
 | db2 build | `llb submit-db2`, `llb verify-db2` | `submit_db2.sh` + `slurm/db2_array.sbatch`, `verify_db2_build.py` |
 | mol2 | `llb mol2` | `db2_to_mol2.py` |
+| chunk | `llb chunk` | `mol_compiler/parallel/submit_chunks.sh` → `submit.slurm` |
 
 The commands below show the scripts by path; `llb <step>` is the same thing.
 
@@ -256,6 +257,18 @@ mol2 chunks that line up with the db2 chunks.
 
 ## 6. Chunking for docking (mol_compiler)
 
+```bash
+llb chunk . db2_run/out --target-per-bin 50000 --shards 200
+```
+
+Writes `work/` (intermediates, logs) and `chunks/` (`chunk_NNNNN.db2.gz` +
+`manifest.tsv`) into the run directory, with account and partition from
+`config/hpc.env`. `chunks.env` records the input and the code commit, and a
+different input into the same run directory is refused.
+`parallel/submit.slurm` still works standalone. Every setting is now an
+environment override (`INPUT_DIR=… RUNDIR=… bash parallel/submit.slurm`), so
+the checkout is never edited.
+
 The verified `.db2.gz` files go to `mol_compiler`'s parallel pipeline as bare
 `.db2.gz` inputs, as before. It takes a record's id from the first `M` line when no
 `ZINC` token is present, which is the case for every contract name (tested:
@@ -267,9 +280,6 @@ zero-padded ZINC22 id produces.
 
 ## What is not done here
 
-- **mol_compiler's `submit.slurm`** still has its own edit-in-place config
-  block (paths, account), so running it means editing the checkout. Convert it
-  to take a run directory like `submit_db2.sh`.
 - **Identity-group dedupe** (`stage4/make_split.py`, SIZE_LADDER_SPEC §3) runs
   on the DRAP side.
 - db2_converter is pinned at `hnlab/db2_converter@63d6656` in `DEPENDENCIES.md`.

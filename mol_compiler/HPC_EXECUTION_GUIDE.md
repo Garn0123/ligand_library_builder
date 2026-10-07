@@ -153,8 +153,17 @@ tree.
 
 ## 2. Configure `parallel/submit.slurm`
 
-Edit the config block at the top of `parallel/submit.slurm` (lines ~15–30).
-Everything you must change:
+**From ligand_library_builder, don't edit anything:** every setting below is
+read from the environment, and `llb chunk` sets them for a run directory:
+
+```bash
+llb chunk RUNDIR DB2_DIR --target-per-bin 50000 --shards 200
+# = RUNDIR=... INPUT_DIR=... TARGET_PER_BIN=... SHARDS=... bash parallel/submit.slurm
+```
+
+WORK_DIR and OUT_DIR then default to `RUNDIR/work` and `RUNDIR/chunks`, and
+ACCOUNT/PARTITION come from `config/hpc.env`. Editing the defaults in place,
+as below, still works for standalone use:
 
 ```bash
 INPUT_DIR=/path/to/ZINC_sync/published/3D   # the tree of .db2.gz files
