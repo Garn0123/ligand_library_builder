@@ -139,7 +139,12 @@ time common/with_env.sh QUPKAKE python run_qupkake/qupkake_protomers.py \
 cat preflight_out/qupkake_failed.tsv            # crashed molecules, now caught
 ```
 
-Scale `--shard-size` and `#SBATCH --time` from that timing, then:
+The timing set is `parents/preflight.smi`: `prepare_parents.py --preflight N`
+picks N molecules (default 20) across heavy-atom counts, largest first, so it errs
+slow. For a small set, use the whole file (`--preflight 50` for 50 molecules).
+CPU-seconds per molecule ≈ `real` × 8 / N, and one shard takes about
+shard size × CPU-s per molecule / 8. Scale `--shard-size` and `--time` from that,
+with ~2× headroom, then:
 
 ```bash
 run_qupkake/submit_qupkake.sh parents protomers                 # + any sbatch args, e.g. --time=04:00:00
