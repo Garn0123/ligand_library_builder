@@ -316,8 +316,9 @@ def main(argv=None) -> int:
     for b, c in attrition.items():
         print(f"  H{int(b):02d}  {c['named']:,} / {c['parents']:,} parents named")
     print(f"invariants 1-3 hold -> {outdir}/library.smi")
-    print(f"\nnext:  python3 stage4/validate_names.py --smi {outdir}/library.smi   (DRAP repo)")
-    print(f"       python check_db2_stereo.py {outdir}/library.smi               (db2_converter env)")
+    print(f"\nnext:  llb validate-names --smi {outdir}/library.smi   "
+          f"(DRAP's stage4/validate_names.py, found via DRAP_DIR in the config)")
+    print(f"       llb check-stereo {outdir}/library.smi             (this repo, db2_converter env)")
     return 0
 
 

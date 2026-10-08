@@ -76,8 +76,8 @@ def main(argv=None) -> int:
         print(f"  [FAIL] {len(split):,} SMILES would be renamed NAME.<i> by --checkstereo:")
         for name, k, smi in split[:10]:
             print(f"           {name}  {k} isomer(s)  {smi}")
-        print("         Re-run assign_names.py in an env with THIS RDKit version, or "
-              "investigate the perception difference, before building.")
+        print("         Re-run `llb names` with an RDKit of THIS version (PREP_ENV in "
+              "the config), or investigate the perception difference, before building.")
     if unstable:
         print(f"  [warn] {len(unstable):,} SMILES enumerate to a different single SMILES. "
               f"Names are safe; the structure may be duplicated within its base id "

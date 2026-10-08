@@ -4,7 +4,7 @@
 > with throwaway names, then `assign_names.py` assigns the 16-character contract
 > names (`NAMING_CONTRACT.md`) over the whole library. The `short` names described
 > in §3c below are 15 characters and predate the contract; they fail
-> `validate_names.py`.
+> `llb validate-names` (DRAP's `stage4/validate_names.py`).
 
 Takes a 2-column `.smi` file, predicts micro-pKa with QupKake, enumerates the
 protonation states populated at pH 6.4 / 7.4 / 8.4, dedupes them, labels them,

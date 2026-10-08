@@ -44,7 +44,7 @@ if (( empty + bad > 0 )); then
     echo
     if (( PURGE )); then
         echo "Purged $(( empty + bad )) file(s); listed in corrupt.txt."
-        echo "Re-run ./status.sh then ./run.sh retry.txt to re-fetch them."
+        echo "Re-fetch them: llb fetch-status <url list>, then llb fetch retry.txt 2."
     else
         echo "Listed in corrupt.txt. Re-run with --purge to delete them."
     fi

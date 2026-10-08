@@ -9,6 +9,8 @@ format (`NAMING_CONTRACT.md` in the DRAP project, enforced here by
 bin/llb         one command for every step; put bin/ on PATH and run from any run directory
 mol_download/   ZINC22 tranches: fetch (run.sh), verify, and sample N per heavy-atom bin
 run_qupkake/    parents -> QupKake micro-pKa -> protomers -> contract names -> db2 checks
+pka_triage/     MolGpKa triage + merge: QupKake only where it matters (branch feat/pka-triage)
+environments/   conda specs for envs this repo defines (llb_pka.yml)
 mol_compiler/   db2 -> load-balanced chunks + manifest, the unit of work for docking
 common/         env.sh / with_env.sh: activate each tool the way config/hpc.env says
 config/         hpc.env.example -- the ONLY place tool paths live
@@ -20,16 +22,18 @@ elsewhere. This repo stops at chunked db2.
 ## Setup on a new machine
 
 ```bash
-git clone git@github.com:Garn0123/ligand_library_builder.git
-cd ligand_library_builder
-cp config/hpc.env.example config/hpc.env      # then point it at QupKake, db2_converter, ...
-export PATH=$PWD/bin:$PATH                     # then: cd to a run directory, `llb help`
+git clone git@github.com:Garn0123/ligand_library_builder.git /nfs/turbo/.../opt/ligand_library_builder
+mkdir -p ~/.config/llb
+cp /nfs/turbo/.../opt/ligand_library_builder/config/hpc.env.example ~/.config/llb/hpc.env  # edit it
+export PATH=/nfs/turbo/.../opt/ligand_library_builder/bin:$PATH   # ~/.bashrc
+export LLB_CONFIG=~/.config/llb/hpc.env                            # ~/.bashrc
+llb help                                       # then: cd to a run directory and go
 ```
 
 Environments are separate on purpose: QupKake pins `xtb 6.4.1` and its own
-torch stack, and db2_converter needs its own module set. `config/hpc.env` names
-one env per tool plus a setup hook for each, and `common/with_env.sh TOOL cmd`
-runs any step inside the right one.
+torch stack, and db2_converter needs its own module set. `hpc.env` names one env
+per tool plus a setup hook for each; `llb <step>` runs each step inside the right
+one, and `llb env TOOL cmd` runs anything else there.
 
 ## Running it
 
