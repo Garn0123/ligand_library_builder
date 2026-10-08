@@ -22,6 +22,7 @@
 #   llb sample ARGS           mol_download/sample_2d.py                  (no env)
 #   llb parents ARGS          run_qupkake/prepare_parents.py             (PREP)
 #   llb qupkake ARGS          run_qupkake/qupkake_protomers.py           (QUPKAKE)
+#   llb molgpka ARGS          pka_triage/molgpka.py  (per-site pKa; --check)  (PKA)
 #   llb submit-qupkake PARENTS OUT [sbatch args]                         (logs -> ./logs)
 #   llb names ARGS            run_qupkake/assign_names.py                (PREP)
 #   llb check-stereo SMI      run_qupkake/check_db2_stereo.py            (DB2C)
@@ -31,7 +32,7 @@
 #   llb chunk RUNDIR DB2DIR [opts]  mol_compiler/parallel/submit_chunks.sh  (no env)
 #
 # Utilities:
-#   llb env TOOL CMD...       run CMD in TOOL's env (QUPKAKE, DB2C, PREP, DOCK)
+#   llb env TOOL CMD...       run CMD in TOOL's env (QUPKAKE, DB2C, PREP, DOCK, PKA)
 #   llb root                  print the code checkout this llb belongs to
 #   llb help                  this text
 
@@ -62,6 +63,7 @@ case "$step" in
     sample)         exec python3 "$D/sample_2d.py" "$@" ;;
     parents)        exec "$W" PREP python "$Q/prepare_parents.py" "$@" ;;
     qupkake)        exec "$W" QUPKAKE python "$Q/qupkake_protomers.py" "$@" ;;
+    molgpka)        exec "$W" PKA python "$LLB_ROOT/pka_triage/molgpka.py" "$@" ;;
     submit-qupkake) exec "$Q/submit_qupkake.sh" "$@" ;;
     names)          exec "$W" PREP python "$Q/assign_names.py" "$@" ;;
     check-stereo)   exec "$W" DB2C python "$Q/check_db2_stereo.py" "$@" ;;

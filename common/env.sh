@@ -3,7 +3,7 @@
 #
 #   source "$LLB_ROOT/common/env.sh"
 #   llb_load_config
-#   llb_activate QUPKAKE        # or DB2C, PREP
+#   llb_activate QUPKAKE        # or DB2C, PREP, DOCK, PKA
 #
 # Written for scripts running under `set -euo pipefail`: conda's activation
 # scripts dereference unset variables, so nounset is lifted around them only.
