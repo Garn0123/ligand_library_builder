@@ -52,7 +52,9 @@ WINDOWS = [0.25 * k for k in range(0, 17)]
 # First match wins; the site atom is the pattern's first atom.
 SITE_CLASSES = [
     ("carboxylic acid", "[OX2H1][CX3]=O"),
-    ("phenol / enol OH", "[OX2H1][c,C]"),
+    ("phenol OH", "[OX2H1]c"),
+    ("enol / oxime OH", "[OX2H1][$(C=*),$(N=*)]"),
+    ("alcohol OH", "[OX2H1][CX4]"),
     ("sulfonamide NH", "[NX3;!H0]S(=O)=O"),
     ("amide / imide NH", "[NX3;!H0]C=[O,S]"),
     ("amidine / guanidine", "[NX2]=C[NX3]"),
@@ -73,6 +75,20 @@ def site_class(mol: Chem.Mol, idx: int) -> str:
         if any(m[0] == idx for m in mol.GetSubstructMatches(patt)):
             return name
     return "other"
+
+
+def context(mol: Chem.Mol, idx: int, radius: int = 2) -> str:
+    """SMILES of the atoms within `radius` bonds of the site, site marked :1."""
+    m = Chem.Mol(mol)
+    m.GetAtomWithIdx(idx).SetAtomMapNum(1)
+    for r in range(radius, 0, -1):
+        bonds = list(Chem.FindAtomEnvironmentOfRadiusN(m, r, idx))
+        if bonds:
+            atoms = {idx} | {a for b in bonds for a in (m.GetBondWithIdx(b).GetBeginAtomIdx(),
+                                                         m.GetBondWithIdx(b).GetEndAtomIdx())}
+            return Chem.MolFragmentToSmiles(m, atomsToUse=sorted(atoms), bondsToUse=bonds,
+                                            canonical=True)
+    return Chem.MolToSmiles(m)
 
 
 def mapping(src: Chem.Mol, parent: Chem.Mol) -> dict[int, int] | None:
@@ -189,7 +205,8 @@ def main(argv=None) -> int:
                               "pka_qupkake": "" if pb is None else f"{pb:.2f}",
                               "delta": "" if None in (pa, pb) else f"{pa - pb:+.2f}",
                               "found_by": "both" if None not in (pa, pb) else
-                                          ("molgpka" if pb is None else "qupkake")})
+                                          ("molgpka" if pb is None else "qupkake"),
+                              "context": context(mol, key[0])})
             if None not in (pa, pb):
                 deltas[cls].append(pa - pb)
     with open(args.outdir / "sites.tsv", "w", newline="") as fh:
@@ -215,6 +232,10 @@ def main(argv=None) -> int:
             row[f"agree_{ph:g}"] = int(same)
             row[f"charge_{ph:g}"] = f"{charge(dm):+d}/{charge(dq):+d}"
         row["agree_all"] = int(agree_all)
+        mid = sorted(phs)[len(phs) // 2]
+        row[f"qupkake_amide_anion_{mid:g}"] = int(any(
+            k == "acidic" and site_class(parent_mol[pid], a) == "amide / imide NH"
+            for a, k in dominant(qs, mid)))
         parent_rows.append(row)
     with open(args.outdir / "parents.tsv", "w", newline="") as fh:
         w = csv.DictWriter(fh, delimiter="\t", fieldnames=list(parent_rows[0]) if parent_rows
@@ -247,6 +268,8 @@ def main(argv=None) -> int:
                                             **{c: stats(v) for c, v in sorted(deltas.items())}},
         "dominant_state_agreement": {f"{ph:g}": round(sum(r[f"agree_{ph:g}"] for r in parent_rows) / n, 3)
                                      for ph in phs} if n else {},
+        "parents_where_qupkake_deprotonates_an_amide_nh": sum(
+            v for r in parent_rows for k, v in r.items() if k.startswith("qupkake_amide_anion_")),
         "agree_at_every_ph": round(sum(r["agree_all"] for r in parent_rows) / n, 3) if n else None,
         "triage_as_run": {
             "route_window": settings["route_window"],
@@ -269,6 +292,8 @@ def main(argv=None) -> int:
     print("dominant microstate agrees with QupKake: " + ", ".join(
         f"pH {k} {v:.0%}" for k, v in summary["dominant_state_agreement"].items())
         + f"; all pH {summary['agree_at_every_ph']:.0%}")
+    print(f"parents whose QupKake state at mid pH has an amide/imide NH deprotonated: "
+          f"{summary['parents_where_qupkake_deprotonates_an_amide_nh']}  (see sites.tsv 'context')")
     t = summary["triage_as_run"]
     print(f"triage as run (window {t['route_window']}): settled {t['settled']}, of which "
           f"{len(t['settled_but_disagree'])} disagree with QupKake "
