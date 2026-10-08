@@ -130,7 +130,9 @@ harness.
 
 1. First real run: Owen's 50, `llb triage` then QupKake on `triage/routed`,
    to check that QupKake's real shard outputs merge cleanly.
-2. Harness on ~10k parents run both ways (`--route-window 99` routes
+2. `llb compare` (written 2026-10-08) is the harness: per-site pKa by site
+   class, dominant microstate agreement per pH, and the routed fraction and
+   miss rate at every window. First real use: Owen's 50. Then ~10k parents run both ways (`--route-window 99` routes
    everything, so triage's protomers.csv and sites.tsv sit next to QupKake's
    for every parent): site-set agreement, pKa scatter by site class,
    protomer-set agreement per pH, routed fraction against the window.

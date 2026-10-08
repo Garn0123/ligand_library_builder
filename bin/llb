@@ -26,6 +26,7 @@
 #   llb molgpka ARGS          pka_triage/molgpka.py  (per-site pKa; --check)  (PKA)
 #   llb triage PARENTS -o T   pka_triage/triage.py  (MolGpKa; routes to QupKake) (PKA)
 #   llb merge ARGS            pka_triage/merge_protomers.py  (before names)   (PREP)
+#   llb compare ARGS          pka_triage/compare.py  (MolGpKa vs QupKake)     (PKA)
 #   llb submit-qupkake PARENTS OUT [sbatch args]                         (logs -> ./logs)
 #   llb names ARGS            run_qupkake/assign_names.py                (PREP)
 #   llb validate-names ARGS   DRAP's stage4/validate_names.py, at DRAP_DIR (no env)
@@ -71,6 +72,7 @@ case "$step" in
     molgpka)        exec "$W" PKA python "$LLB_ROOT/pka_triage/molgpka.py" "$@" ;;
     triage)         exec "$W" PKA python "$LLB_ROOT/pka_triage/triage.py" "$@" ;;
     merge)          exec "$W" PREP python "$LLB_ROOT/pka_triage/merge_protomers.py" "$@" ;;
+    compare)        exec "$W" PKA python "$LLB_ROOT/pka_triage/compare.py" "$@" ;;
     submit-qupkake) exec "$Q/submit_qupkake.sh" "$@" ;;
     names)          exec "$W" PREP python "$Q/assign_names.py" "$@" ;;
     validate-names)
