@@ -65,9 +65,9 @@ from rdkit import Chem  # noqa: E402
 
 from molgpka import MolGpKa  # noqa: E402
 from prepare_parents import write_shards  # noqa: E402
-from qupkake_protomers import (PROTOMER_COLUMNS, Site, build_protomers,  # noqa: E402
-                               implausible_sites, make_name, protomer_row,
-                               unchanged_protomers)
+from qupkake_protomers import (PROTOMER_COLUMNS, SITE_FILTER_VERSION,  # noqa: E402
+                               Site, build_protomers, implausible_sites, make_name,
+                               protomer_row, unchanged_protomers)
 
 TRIAGE_COLUMNS = ["site_source", "route"]
 
@@ -93,6 +93,7 @@ def settings_of(args) -> dict:
     return {"ph": args.ph, "route_window": args.route_window, "margin": args.margin,
             "coupling_bonds": args.coupling_bonds, "coupled": args.coupled,
             "keep_amide_sites": args.keep_amide_sites,
+            "site_filter_version": "off" if args.keep_amide_sites else SITE_FILTER_VERSION,
             "min_population": args.min_population, "max_states": args.max_states,
             "max_ambiguous": args.max_ambiguous}
 
@@ -176,7 +177,7 @@ def triage_shard(rows: list[tuple[str, str]], model: MolGpKa, args):
 
 def write_tsv(path: Path, cols: list[str], rows: list[dict]) -> None:
     with open(path, "w", newline="") as fh:
-        w = csv.DictWriter(fh, delimiter="\t", fieldnames=cols, restval="")
+        w = csv.DictWriter(fh, lineterminator="\n", delimiter="\t", fieldnames=cols, restval="")
         w.writeheader()
         w.writerows(rows)
 
@@ -208,7 +209,7 @@ def run_part(args, manifest, settings_sha) -> int:
             fh.write("parent_id\tidx\tkind\tpka\tkept\n")
             fh.writelines("\t".join(map(str, s)) + "\n" for s in site_rows)
         with open(out / "protomers.csv", "w", newline="") as fh:
-            w = csv.writer(fh)
+            w = csv.writer(fh, lineterminator="\n")
             w.writerow(PROTOMER_COLUMNS + TRIAGE_COLUMNS)
             w.writerows(protomer_row(p) + ["molgpka", route] for p, route in protomers)
         (out / "DONE").write_text(
@@ -248,7 +249,7 @@ def finish(args, manifest) -> int:
     rdir.mkdir(parents=True, exist_ok=True)
     if routed:
         with open(rdir / "parents.tsv", "w", newline="") as fh:
-            w = csv.DictWriter(fh, delimiter="\t", fieldnames=list(parents[0]))
+            w = csv.DictWriter(fh, lineterminator="\n", delimiter="\t", fieldnames=list(parents[0]))
             w.writeheader()
             w.writerows(routed)
         rows, pre = write_shards(rdir, routed, args.qupkake_shard_size, args.seed,

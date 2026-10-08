@@ -236,8 +236,8 @@ def main(argv=None) -> int:
                 status = "OK"
                 if row is None:
                     status = "NOT_IN_LIBRARY"
-                elif abs(d["Formal_Charge"] - int(row["net_charge"])) > args.charge_tol:
-                    status = "CHARGE_MISMATCH"
+                elif round(d["Formal_Charge"]) != int(row["net_charge"]):
+                    status = "CHARGE_MISMATCH"       # a different integer charge
                 if d["_unknown_elements"]:
                     status = f"UNKNOWN_ELEMENT:{','.join(d['_unknown_elements'])}"
                 problems[status] += status != "OK"
@@ -255,7 +255,7 @@ def main(argv=None) -> int:
     missing = sorted(set(library) - set(chosen))
     cols = list(index_rows[0])
     with open(args.outdir / "index.tsv", "w", newline="") as fh:
-        w = csv.DictWriter(fh, delimiter="\t", fieldnames=cols)
+        w = csv.DictWriter(fh, lineterminator="\n", delimiter="\t", fieldnames=cols)
         w.writeheader()
         for r in index_rows:
             r = dict(r)

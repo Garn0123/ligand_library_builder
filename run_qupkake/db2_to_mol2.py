@@ -59,7 +59,14 @@ def find_db2(inputs: list[str]) -> list[Path]:
     for s in inputs:
         p = Path(s)
         if p.is_dir():
-            out += sorted(p.rglob("*.db2.gz")) + sorted(p.rglob("*.db2"))
+            found = sorted(p.rglob("*.db2.gz")) + sorted(p.rglob("*.db2"))
+            # a build's working directory (NAME/db2/output.N.db2.gz) copied into
+            # out/ mid-build by the array's periodic sync: partial, never final
+            stale = [f for f in found if f.parent.name == "db2" and f.name.startswith("output.")]
+            if stale:
+                print(f"  skipping {len(stale)} db2 file(s) inside build working "
+                      f"directories, e.g. {stale[0]}", file=sys.stderr)
+            out += [f for f in found if f not in set(stale)]
         elif p.exists():
             out.append(p)
         else:
@@ -134,7 +141,9 @@ def main(argv=None) -> int:
                          "else db2tool on PATH)")
     ap.add_argument("--no-broken-fallback", action="store_true",
                     help="leave out molecules whose every set is flagged broken")
-    ap.add_argument("--charge-tol", type=float, default=0.05)
+    ap.add_argument("--charge-tol", type=float, default=0.05,
+                    help="summed-charge drift above this is reported (OK_CHARGE_DRIFT); "
+                         "only a different INTEGER charge is a mismatch")
     args = ap.parse_args(argv)
 
     files = find_db2(args.inputs)
@@ -166,8 +175,12 @@ def main(argv=None) -> int:
             fh.write("".join(r["lines"]).rstrip("\n") + "\n\n")
             want = expected.get(name)
             status = "OK"
-            if want is not None and abs(r["charge"] - want) > args.charge_tol:
+            # per-atom db2 charges drift a few hundredths over ~70 atoms
+            # (seen 2026-10-08: +3.07, -0.95); the protomer is the integer
+            if want is not None and round(r["charge"]) != want:
                 status, bad = "CHARGE_MISMATCH", bad + 1
+            elif want is not None and abs(r["charge"] - want) > args.charge_tol:
+                status = "OK_CHARGE_DRIFT"
             elif args.library and want is None:
                 status = "NOT_IN_LIBRARY"
             rows.append([name, len(by_name[name]), r["conf"], f"{r['e1']:.3f}",

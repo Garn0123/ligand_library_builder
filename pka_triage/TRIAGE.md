@@ -46,7 +46,12 @@ Sources for the amide numbers (checked 2026-10-08):
 | 26.9 / 24.2 / 18.5 | urea / ethyl carbamate / thioacetamide N-H | DMSO | same table, "Amides (NH)", "Carbamates (NH)" |
 | 14.7 | succinimide N-H | DMSO | same table, "Imides (NH)" |
 | 8.30 | phthalimide N-H | water | Ripin & Evans, "Imides" |
+| 38 (extrapolated) / 41 | ammonia N-H | water / DMSO | Ripin & Evans, "Amines" |
+| 44 / 30.6 / 25.0 | pyrrolidine / aniline / diphenylamine N-H | DMSO | Reich DMSO table, "Amines (NH)" |
 | -0.62 +/- 0.07, -0.42, -0.28 | protonated acetamide, N-methylacetamide, N,N-dimethylacetamide | water, 298 K | Grant, McTigue & Ward, *Aust. J. Chem.* 1983, 36, 2211-2218, doi:10.1071/CH9832211 |
+
+The amine rows back `amine_nh_acid` (site filter v2, 2026-10-08): Owen's set
+produced [NH-]/[N-] amine-anion protomers, three of which failed db2_converter.
 
 What these support: no listed value puts an ordinary amide, anilide, urea or
 carbamate N-H anywhere near 2-7 in water. The one water value is 15.1

@@ -202,5 +202,24 @@ for p in "${pids[@]}"; do wait "$p" || rc=1; done
 
 kill "$syncer" 2>/dev/null
 sync_back
+# The periodic sync copies a molecule's working directory (NAME/) while it
+# builds; build_ligand deletes it from scratch when done, but rsync without
+# --delete leaves the copy in out/. Every build has ended here, so remove any
+# out/ subdirectory scratch no longer has.
+# Only directories named like a contract name (C + 14 base62 + C) are touched,
+# and only when RUN and scratch are both set.
+if [[ -n "${RUN:-}" && -n "${scratch:-}" && -d "$RUN/out" ]]; then
+    for k in $(seq 0 $((NCPUS-1))); do
+        s=$(( SLURM_ARRAY_TASK_ID * NCPUS + k ))
+        (( s < NSHARDS )) || continue
+        sid=$(printf "%04d" "$s")
+        for d in "$RUN/out/$sid"/*/; do
+            n="$(basename "$d")"
+            [[ -d "$d" && "$n" =~ ^C[0-9A-Za-z]{14}C$ && ! -d "$scratch/$sid/$n" ]] || continue
+            echo "removing stale working copy $RUN/out/$sid/$n"
+            rm -rf -- "$RUN/out/$sid/$n"
+        done
+    done
+fi
 echo "task done rc=$rc"
 exit $rc

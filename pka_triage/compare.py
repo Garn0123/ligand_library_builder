@@ -228,7 +228,7 @@ def main(argv=None) -> int:
             if None not in (pa, pb):
                 deltas[cls].append(pa - pb)
     with open(args.outdir / "sites.tsv", "w", newline="") as fh:
-        w = csv.DictWriter(fh, delimiter="\t", fieldnames=list(site_rows[0]) if site_rows
+        w = csv.DictWriter(fh, lineterminator="\n", delimiter="\t", fieldnames=list(site_rows[0]) if site_rows
                            else ["parent_id"])
         w.writeheader()
         w.writerows(site_rows)
@@ -256,7 +256,7 @@ def main(argv=None) -> int:
             for a, k in dominant(qk_raw.get(pid, qs), mid)))
         parent_rows.append(row)
     with open(args.outdir / "parents.tsv", "w", newline="") as fh:
-        w = csv.DictWriter(fh, delimiter="\t", fieldnames=list(parent_rows[0]) if parent_rows
+        w = csv.DictWriter(fh, lineterminator="\n", delimiter="\t", fieldnames=list(parent_rows[0]) if parent_rows
                            else ["parent_id"])
         w.writeheader()
         w.writerows(parent_rows)

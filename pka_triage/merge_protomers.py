@@ -29,8 +29,8 @@ Refuses, rather than guesses, when:
     parents);
   * a QupKake shard's DONE does not match the routed manifest's sha256, or
     QupKake output contains a parent that was not routed;
-  * a QupKake shard predates the amide-site filter (no dropped_sites.tsv):
-    rebuild it with llb reenumerate, no xtb needed.
+  * a QupKake shard was enumerated under a different implausible-site filter
+    (site_filter.txt) than the triage: rebuild it with llb reenumerate, no xtb.
 
 --qupkake-parents PARENTS takes the QupKake side from a run over another
 parents directory (typically an all-QupKake run over the same parents), and
@@ -113,16 +113,21 @@ def load_qupkake(args, routed_ids: set[str], settings: dict):
                 raise SystemExit(f"{d} ran with {key}={done[key]}, the triage with "
                                  f"{settings[skey]}; the two halves would build protomers "
                                  f"differently. Rerun one so they agree.")
-        # QupKake protomers built before the implausible-site filter
-        # (2026-10-08) can hold amide anions; the triage side never does
-        if not (d / "dropped_sites.tsv").exists():
-            raise SystemExit(f"{d} was enumerated before the amide-site filter existed and "
-                             f"may contain amide anions. Rebuild it from its SDFs (no xtb):\n"
-                             f"  llb reenumerate {rdir} {args.qupkake} {args.qupkake}_fixed\n"
-                             f"and pass --qupkake {args.qupkake}_fixed")
-        kept_amide = "--keep-amide-sites" in done.get("reenumerated_args", "")
-        if kept_amide != bool(settings.get("keep_amide_sites", False)):
-            raise SystemExit(f"{d} and the triage disagree on --keep-amide-sites")
+        # QupKake protomers must have been built under the same implausible-site
+        # rules as the triage (amide anions, amine anions, ...)
+        want_v = str(settings.get("site_filter_version", "1"))
+        have_v = ""
+        if (d / "site_filter.txt").exists():
+            have_v = read_done(d / "site_filter.txt").get("site_filter_version", "")
+        elif (d / "dropped_sites.tsv").exists():
+            have_v = "1"
+        if have_v != want_v:
+            raise SystemExit(f"{d} was enumerated under site filter "
+                             f"{have_v or 'none'}, the triage under {want_v}. Rebuild it "
+                             f"from its SDFs (no xtb):\n"
+                             f"  llb reenumerate {rdir} {args.qupkake} NEW_DIR\n"
+                             f"and pass --qupkake NEW_DIR (a triage made before the "
+                             f"change needs re-running too, into a new -o)")
         prov.append(f"qupkake_shard_{int(r['index']):05d}={r['sha256']}")
         with open(d / "protomers.csv") as fh:
             for row in csv.DictReader(fh):
@@ -233,7 +238,7 @@ def main(argv=None) -> int:
         odir = shard_dir(args.outdir, r["index"])
         odir.mkdir(parents=True, exist_ok=True)
         with open(odir / "protomers.csv", "w", newline="") as fh:
-            w = csv.DictWriter(fh, fieldnames=OUT_COLUMNS)
+            w = csv.DictWriter(fh, lineterminator="\n", fieldnames=OUT_COLUMNS)
             w.writeheader()
             w.writerows(out_rows)
         with open(odir / "qupkake_failed.tsv", "w") as fh:

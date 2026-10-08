@@ -189,7 +189,7 @@ def main(argv=None) -> int:
                          "db2_file": f.name, "db2_name": "", "amsol_charge": ""})
 
     with open(args.report, "w", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=["protomer_name", "parent",
+        w = csv.DictWriter(fh, lineterminator="\n", fieldnames=["protomer_name", "parent",
                                            "expected_charge", "status", "detail",
                                            "db2_file", "db2_name", "amsol_charge"])
         w.writeheader()

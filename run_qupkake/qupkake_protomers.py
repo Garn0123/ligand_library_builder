@@ -93,6 +93,13 @@ DEFAULT_STEREO_CAP = 32
 #                 pH (succinimide 14.7 in DMSO; phthalimide 8.30 in water).
 #                 Kept: imide N-H (between two C=O) and N-sulfonyl N-H
 #                 (acylsulfonamides, sulfonylureas; acidic, value not sourced).
+#  amine_nh_acid  N-H of an amine (alkyl, cyclic, aniline, diarylamine,
+#                 enamine) as an ACID, i.e. an [N-]/[NH-] anion. NH3 is 38 in
+#                 water (extrapolated; Ripin & Evans) and 41 in DMSO; DMSO:
+#                 pyrrolidine 44, aniline 30.6, diphenylamine 25.0 (Reich).
+#                 Seen on Owen's set (2026-10-08): [NH-] and [N-] protomers,
+#                 three of which then failed db2_converter (1generate).
+#                 N bonded to anything but C/H, or to C=N/O/S, is left alone.
 #  amide_n_base   any N on C=O/C=S or S(=O)=O as a BASE. Amides protonate on
 #                 O, not N, and even that is pKa -0.62 (acetamide, water);
 #                 MolGpKa's patterns put anilides at 3.9-6.
@@ -101,9 +108,16 @@ IMPLAUSIBLE_SITES = {
     ("acidic", "amide_nh_acid"): Chem.MolFromSmarts(
         "[#7;!H0;$([#7]-[#6]=[#8,#16]);!$([#7](-[#6]=[#8,#16])-[#6]=[#8,#16]);"
         "!$([#7]-[#16](=[#8])=[#8])]"),
+    ("acidic", "amine_nh_acid"): Chem.MolFromSmarts(
+        "[#7X3;!a;!H0;!$([#7]~[!#6;!#1]);!$([#7]-[#6]=,#[#7,#8,#16])]"),
     ("basic", "amide_n_base"): Chem.MolFromSmarts(
         "[#7;$([#7]-[#6]=[#8,#16]),$([#7]-[#16](=[#8])=[#8])]"),
 }
+
+
+# Bumped whenever IMPLAUSIBLE_SITES changes, and written into every output
+# that depends on it, so runs filtered by different rules are never mixed.
+SITE_FILTER_VERSION = 2          # 1: amide rules (2026-10-08); 2: + amine_nh_acid
 
 
 def implausible_sites(mol: Chem.Mol) -> dict[tuple[int, str], str]:
@@ -1062,7 +1076,7 @@ def main(argv=None):
         work.mkdir(parents=True, exist_ok=True)
         csv_path = work / "qupkake_input.csv"
         with open(csv_path, "w", newline="") as fh:
-            w = csv.writer(fh)
+            w = csv.writer(fh, lineterminator="\n")
             w.writerow(["smiles", "name"])
             w.writerows([[s, n] for s, n in inputs])
         sdf_path = run_qupkake(csv_path, work, "qupkake_output.sdf",
@@ -1084,6 +1098,8 @@ def main(argv=None):
         if dropped_sites:
             print(f"      dropped {len(dropped_sites)} implausible site(s): "
                   f"{dict(Counter(r for *_, r in dropped_sites))} (dropped_sites.tsv)")
+    (outdir / "site_filter.txt").write_text(
+        f"site_filter_version={'off' if args.keep_amide_sites else SITE_FILTER_VERSION}\n")
     with open(outdir / "dropped_sites.tsv", "w") as fh:
         fh.write("name\tidx\tkind\tpka\treason\n")
         fh.writelines(f"{n}\t{i}\t{k}\t{p:.3f}\t{r}\n" for n, i, k, p, r in dropped_sites)
@@ -1155,7 +1171,7 @@ def main(argv=None):
                 fh.write(f"{p.smiles} {p.name}\n")
 
     with open(outdir / "protomers.csv", "w", newline="") as fh:
-        w = csv.writer(fh)
+        w = csv.writer(fh, lineterminator="\n")
         w.writerow(PROTOMER_COLUMNS)
         w.writerows(protomer_row(p) for p in protomers)
 

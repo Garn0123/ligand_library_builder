@@ -286,6 +286,12 @@ DOCK's header block with name, molecular weight, formal charge, H-bond
 acceptors/donors and heavy atoms computed DOCK's way, plus LLB_ lines with the
 SMILES, parent, input name, protomer, pH and RDKit descriptors):
 
+**Broken sets.** In the db2 (db2_converter 63d6656, mol2db2/clash.py) a set is
+flagged broken by one rule only: a rotatable hydrogen (OH/NH turned by
+`--rotateh`) within 1.70 A of another hydrogen more than two bonds away. DOCK6
+samples broken sets unless `skip_broken yes` (default `no`, conf_gen_hdb.cpp);
+`llb env DOCK db2tool audit` counts all_broken / some_broken per molecule.
+
 ```bash
 llb mol2-library library/library.mol2 --library library/library.tsv -o mol2_lib --shard-size 1000
 ``` Over plain

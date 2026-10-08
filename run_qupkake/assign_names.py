@@ -268,7 +268,7 @@ def main(argv=None) -> int:
             "heavy_atoms", "ph_values", "population_estimate", "invertomer_of", "note",
             "smiles", "site_source"]
     with open(outdir / "library.tsv", "w", newline="") as fh:
-        w = csv.DictWriter(fh, delimiter="\t", fieldnames=cols)
+        w = csv.DictWriter(fh, lineterminator="\n", delimiter="\t", fieldnames=cols)
         w.writeheader()
         w.writerows(library)
     with open(outdir / "dropped.tsv", "w") as fh:

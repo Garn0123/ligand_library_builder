@@ -186,7 +186,7 @@ def main(argv=None) -> int:
 
     parents = sorted(by_id.values(), key=lambda r: r["parent_id"])
     with open(outdir / "parents.tsv", "w", newline="") as fh:
-        w = csv.DictWriter(fh, delimiter="\t", fieldnames=list(parents[0]) if parents
+        w = csv.DictWriter(fh, lineterminator="\n", delimiter="\t", fieldnames=list(parents[0]) if parents
                            else ["parent_id"])
         w.writeheader()
         w.writerows(parents)
