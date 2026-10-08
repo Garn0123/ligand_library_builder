@@ -35,6 +35,8 @@
 #   llb submit-db2 RUNDIR SMI [opts] [-- sbatch args]                    (run_qupkake/submit_db2.sh)
 #   llb verify-db2 ARGS       run_qupkake/verify_db2_build.py            (DB2C)
 #   llb mol2 ARGS             run_qupkake/db2_to_mol2.py                 (DOCK)
+#   llb mol2-library MOL2 --library TSV -o DIR [--shard-size N]
+#                             DOCK-header multi-mol2 shards, run_qupkake/mol2_library.py (PREP)
 #   llb chunk RUNDIR DB2DIR [opts]  mol_compiler/parallel/submit_chunks.sh  (no env)
 #
 # Utilities:
@@ -90,6 +92,7 @@ case "$step" in
     submit-db2)     exec "$Q/submit_db2.sh" "$@" ;;
     verify-db2)     exec "$W" DB2C python "$Q/verify_db2_build.py" "$@" ;;
     mol2)           exec "$W" DOCK python3 "$Q/db2_to_mol2.py" "$@" ;;
+    mol2-library)   exec "$W" PREP python "$Q/mol2_library.py" "$@" ;;
     chunk)          exec "$LLB_ROOT/mol_compiler/parallel/submit_chunks.sh" "$@" ;;
     env)            exec "$W" "$@" ;;
     root)           echo "$LLB_ROOT" ;;

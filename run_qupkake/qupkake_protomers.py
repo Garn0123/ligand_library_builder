@@ -82,14 +82,20 @@ DEFAULT_STEREO_CAP = 32
 # (both paths: QupKake here, MolGpKa in pka_triage/triage.py).
 #
 #  amide_nh_acid  N-H of an amide, anilide, urea, carbamate, hydrazide or
-#                 thioamide as an ACID. In water these are ~13-17. QupKake put
-#                 44 of them at 2.4-6.7 on Owen's set (2026-10-08), making an
-#                 amide anion the dominant state at pH 7.4 in 22 of 50 parents;
-#                 MolGpKa put some anilides at 6-7. Kept: imide N-H (between
-#                 two C=O, ~9-10) and N-sulfonyl N-H (acylsulfonamide ~4-5,
-#                 sulfonylurea), which really are acidic.
-#  amide_n_base   any N on C=O/C=S or S(=O)=O as a BASE. N-protonating an amide
-#                 is ~ -1; MolGpKa's patterns put anilides at 3.9-6.
+#                 thioamide as an ACID. QupKake put 44 of them at 2.4-6.7 on
+#                 Owen's set (2026-10-08), making an amide anion the dominant
+#                 state at pH 7.4 in 22 of 50 parents; MolGpKa put some anilides
+#                 at 6-7. Reference values (sources in pka_triage/TRIAGE.md):
+#                 acetamide 15.1 in water (extrapolated) and 25.5 in DMSO;
+#                 DMSO: N-methylacetamide 25.9, benzamide 23.3, acetanilide
+#                 21.5, urea 26.9, ethyl carbamate 24.2, thioacetamide 18.5 --
+#                 all well above the imides that ARE acidic at physiological
+#                 pH (succinimide 14.7 in DMSO; phthalimide 8.30 in water).
+#                 Kept: imide N-H (between two C=O) and N-sulfonyl N-H
+#                 (acylsulfonamides, sulfonylureas; acidic, value not sourced).
+#  amide_n_base   any N on C=O/C=S or S(=O)=O as a BASE. Amides protonate on
+#                 O, not N, and even that is pKa -0.62 (acetamide, water);
+#                 MolGpKa's patterns put anilides at 3.9-6.
 # --keep-amide-sites turns both off.
 IMPLAUSIBLE_SITES = {
     ("acidic", "amide_nh_acid"): Chem.MolFromSmarts(

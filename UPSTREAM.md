@@ -279,7 +279,16 @@ reader and mol2 writer), so it is consistent with the db2 by construction:
 llb mol2 db2_run/out --library library/library.tsv -o library/library.mol2
 ```
 
-`db2tool` comes from `DB2TOOL_EXE` / `DOCK_SETUP` in your `hpc.env`. Over plain
+`db2tool` comes from `DB2TOOL_EXE` / `DOCK_SETUP` in your `hpc.env`.
+
+The library as DOCK-format multi-mol2 shards (one conformer per molecule,
+DOCK's header block with name, molecular weight, formal charge, H-bond
+acceptors/donors and heavy atoms computed DOCK's way, plus LLB_ lines with the
+SMILES, parent, input name, protomer, pH and RDKit descriptors):
+
+```bash
+llb mol2-library library/library.mol2 --library library/library.tsv -o mol2_lib --shard-size 1000
+``` Over plain
 `tomol2`, the wrapper adds three things:
 
 - **One conformer per molecule.** db2_converter writes one db2 record per rigid

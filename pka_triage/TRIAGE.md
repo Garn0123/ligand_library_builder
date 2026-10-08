@@ -37,6 +37,24 @@ Also filtered, in BOTH paths (`qupkake_protomers.IMPLAUSIBLE_SITES`,
   so the all-QupKake library had an amide ANION as the dominant state at
   pH 7.4 in 22 of 50 parents; all 5 "settled but disagree" parents were this.
   Imide N-H and N-sulfonyl N-H are kept (genuinely acidic).
+Sources for the amide numbers (checked 2026-10-08):
+
+| value | compound | solvent | source |
+|---|---|---|---|
+| 15.1 (the table marks water values > 14 as extrapolated) | acetamide N-H | water | Ripin & Evans, pKa table (Harvard Chem 206), "Amides & carbamates" |
+| 25.5 / 25.9 / 23.3 / 21.5 | acetamide / N-methylacetamide / benzamide / acetanilide N-H | DMSO | Reich, *Equilibrium pKa Table (DMSO)*, ACS Division of Organic Chemistry, updated 2024-07-26, "Amides (NH)" (Bordwell data) |
+| 26.9 / 24.2 / 18.5 | urea / ethyl carbamate / thioacetamide N-H | DMSO | same table, "Amides (NH)", "Carbamates (NH)" |
+| 14.7 | succinimide N-H | DMSO | same table, "Imides (NH)" |
+| 8.30 | phthalimide N-H | water | Ripin & Evans, "Imides" |
+| -0.62 +/- 0.07, -0.42, -0.28 | protonated acetamide, N-methylacetamide, N,N-dimethylacetamide | water, 298 K | Grant, McTigue & Ward, *Aust. J. Chem.* 1983, 36, 2211-2218, doi:10.1071/CH9832211 |
+
+What these support: no listed value puts an ordinary amide, anilide, urea or
+carbamate N-H anywhere near 2-7 in water. The one water value is 15.1
+(acetamide, extrapolated), and in DMSO every one of them sits 4-12 units above
+an imide, whose water pKa is about 8 (phthalimide). That supports dropping
+them. It does NOT give a water pKa for anilides or ureas specifically, and the
+acylsulfonamide "keep" is chemistry knowledge, not a number checked here.
+
 Dropped sites are listed per shard in `dropped_sites.tsv` (QupKake path) and
 `decisions.tsv` / `sites.tsv` kept=0 (triage). QupKake runs enumerated before
 this filter are rebuilt from their SDFs with `llb reenumerate` (no xtb);
