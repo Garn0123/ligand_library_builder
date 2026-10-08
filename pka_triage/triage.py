@@ -10,7 +10,7 @@ Reads a prepare_parents.py directory (parents.tsv, shards.tsv, shards/) and, for
 each parent shard, writes  triage/shards/shard_NNNNN/:
 
   sites.tsv       every MolGpKa site: parent_id, idx, kind, pka, kept (for the
-                  harness; kept=0 = basic site on an amide N, see NON_BASIC_N)
+                  harness; kept=0 = dropped by qupkake_protomers.IMPLAUSIBLE_SITES)
   decisions.tsv   per parent: route (molgpka | qupkake), reason, min_gap, ...
   protomers.csv   MolGpKa protomers for EVERY parent, routed ones included (the
                   merge falls back to them if QupKake fails, and the harness
@@ -66,15 +66,15 @@ from rdkit import Chem  # noqa: E402
 from molgpka import MolGpKa  # noqa: E402
 from prepare_parents import write_shards  # noqa: E402
 from qupkake_protomers import (PROTOMER_COLUMNS, Site, build_protomers,  # noqa: E402
-                               make_name, protomer_row, unchanged_protomers)
+                               implausible_sites, make_name, protomer_row,
+                               unchanged_protomers)
 
 TRIAGE_COLUMNS = ["site_source", "route"]
 
-# MolGpKa's base SMARTS also match the N of amides (anilides, benzamides) and
-# predicts pKa 3.4-6 there; N-protonation of an amide is about -1, so those
-# sites are artifacts that build C(=O)[NH2+] protomers. Dropped by default
-# (--keep-amide-bases to keep), and kept in sites.tsv with kept=0.
-NON_BASIC_N = Chem.MolFromSmarts("[#7;$([#7]-[#6]=[#8,#16]),$([#7]-[#16](=[#8])=[#8])]")
+# Amide N as a base (MolGpKa: anilides 3.9-6) or amide N-H as an acid (some
+# anilides 6-7) are dropped by the same rule the QupKake path uses
+# (qupkake_protomers.IMPLAUSIBLE_SITES; --keep-amide-sites to keep them), and
+# kept in sites.tsv with kept=0.
 DECISION_COLUMNS = ["parent_id", "route", "reason", "n_sites", "min_gap",
                     "nearest_site", "coupled_pairs", "n_protomers", "dropped_sites", "note"]
 CURVE_WINDOWS = [0.25 * k for k in range(0, 17)]          # 0 .. 4 pKa units
@@ -92,7 +92,7 @@ def read_manifest(parents: Path) -> list[dict]:
 def settings_of(args) -> dict:
     return {"ph": args.ph, "route_window": args.route_window, "margin": args.margin,
             "coupling_bonds": args.coupling_bonds, "coupled": args.coupled,
-            "keep_amide_bases": args.keep_amide_bases,
+            "keep_amide_sites": args.keep_amide_sites,
             "min_population": args.min_population, "max_states": args.max_states,
             "max_ambiguous": args.max_ambiguous}
 
@@ -130,11 +130,10 @@ def triage_shard(rows: list[tuple[str, str]], model: MolGpKa, args):
                               "reason": "molgpka_failed", "n_sites": 0,
                               "note": f"{type(e).__name__}: {e}"[:200]})
             continue
-        non_basic = set() if args.keep_amide_bases else {
-            m[0] for m in ref.GetSubstructMatches(NON_BASIC_N)}
+        bad = {} if args.keep_amide_sites else implausible_sites(ref)
         sites, dropped = [], []
         for s in found:
-            keep = not (s.kind == "basic" and s.idx in non_basic)
+            keep = (s.idx, s.kind) not in bad
             (sites if keep else dropped).append(Site(idx=s.idx, kind=s.kind, pka=s.pka))
             site_rows.append((pid, s.idx, s.kind, f"{s.pka:.3f}", int(keep)))
         isomers = [mol]                              # --stereo carry, as the array runs
@@ -318,8 +317,9 @@ def main(argv=None) -> int:
     ap.add_argument("--coupling-bonds", type=int, default=3,
                     help="same-kind charged sites this close count as coupled (0 = off)")
     ap.add_argument("--coupled", choices=["route", "ignore"], default="route")
-    ap.add_argument("--keep-amide-bases", action="store_true",
-                    help="keep MolGpKa's basic sites on amide/sulfonamide N")
+    ap.add_argument("--keep-amide-sites", action="store_true",
+                    help="keep amide N-H acid / amide N base sites (see "
+                         "qupkake_protomers.IMPLAUSIBLE_SITES)")
     ap.add_argument("--min-population", type=float, default=0.01)
     ap.add_argument("--max-states", type=int, default=8)
     ap.add_argument("--max-ambiguous", type=int, default=6)

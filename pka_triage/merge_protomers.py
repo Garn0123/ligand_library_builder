@@ -28,7 +28,13 @@ Refuses, rather than guesses, when:
     than the triage (protomer sets would mean different things for different
     parents);
   * a QupKake shard's DONE does not match the routed manifest's sha256, or
-    QupKake output contains a parent that was not routed.
+    QupKake output contains a parent that was not routed;
+  * a QupKake shard predates the amide-site filter (no dropped_sites.tsv):
+    rebuild it with llb reenumerate, no xtb needed.
+
+--qupkake-parents PARENTS takes the QupKake side from a run over another
+parents directory (typically an all-QupKake run over the same parents), and
+uses only the parents the triage routed.
 """
 from __future__ import annotations
 
@@ -74,7 +80,8 @@ def load_qupkake(args, routed_ids: set[str], settings: dict):
     failed: dict[str, str] = {}
     unfinished: set[str] = set()
     prov: list[str] = []
-    rdir = args.triage / "routed"
+    full = args.qupkake_parents is not None
+    rdir = args.qupkake_parents if full else args.triage / "routed"
     if not routed_ids:
         return rows, failed, unfinished, prov
     if args.qupkake is None:
@@ -84,6 +91,10 @@ def load_qupkake(args, routed_ids: set[str], settings: dict):
         d = shard_dir(args.qupkake, r["index"])
         shard_ids = [l.split()[1] for l in (rdir / r["path"]).read_text().splitlines()
                      if l.strip()]
+        if full:                  # only the routed parents of a full run are used
+            shard_ids = [p for p in shard_ids if p in routed_ids]
+            if not shard_ids:
+                continue
         if not (d / "DONE").exists():
             unfinished.update(shard_ids)
             continue
@@ -102,15 +113,27 @@ def load_qupkake(args, routed_ids: set[str], settings: dict):
                 raise SystemExit(f"{d} ran with {key}={done[key]}, the triage with "
                                  f"{settings[skey]}; the two halves would build protomers "
                                  f"differently. Rerun one so they agree.")
+        # QupKake protomers built before the implausible-site filter
+        # (2026-10-08) can hold amide anions; the triage side never does
+        if not (d / "dropped_sites.tsv").exists():
+            raise SystemExit(f"{d} was enumerated before the amide-site filter existed and "
+                             f"may contain amide anions. Rebuild it from its SDFs (no xtb):\n"
+                             f"  llb reenumerate {rdir} {args.qupkake} {args.qupkake}_fixed\n"
+                             f"and pass --qupkake {args.qupkake}_fixed")
+        kept_amide = "--keep-amide-sites" in done.get("reenumerated_args", "")
+        if kept_amide != bool(settings.get("keep_amide_sites", False)):
+            raise SystemExit(f"{d} and the triage disagree on --keep-amide-sites")
         prov.append(f"qupkake_shard_{int(r['index']):05d}={r['sha256']}")
         with open(d / "protomers.csv") as fh:
             for row in csv.DictReader(fh):
-                rows[row["parent_name"]].append(row)
+                if row["parent_name"] in routed_ids or not full:
+                    rows[row["parent_name"]].append(row)
         f = d / "qupkake_failed.tsv"
         if f.exists():
             with open(f) as fh:
                 for row in csv.DictReader(fh, delimiter="\t"):
-                    failed[row["name"]] = row["reason"]
+                    if row["name"] in routed_ids or not full:
+                        failed[row["name"]] = row["reason"]
     stray = (set(rows) | set(failed)) - routed_ids
     if stray:
         raise SystemExit(f"QupKake output has {len(stray)} parent(s) that were not routed, "
@@ -129,6 +152,10 @@ def main(argv=None) -> int:
     ap.add_argument("--triage", type=Path, required=True, help="triage.py -o")
     ap.add_argument("--qupkake", type=Path, default=None,
                     help="OUT dir of the QupKake array run on TRIAGE/routed")
+    ap.add_argument("--qupkake-parents", type=Path, default=None,
+                    help="the parents directory --qupkake was run on, when it is NOT "
+                         "TRIAGE/routed -- e.g. an all-QupKake run over the original "
+                         "parents; only its routed parents are used")
     ap.add_argument("-o", "--outdir", type=Path, default=Path("merged"))
     ap.add_argument("--on-qupkake-fail", choices=["molgpka", "drop"], default="molgpka")
     ap.add_argument("--allow-partial", action="store_true")

@@ -191,6 +191,17 @@ clean one. `qupkake_protomers.py` now audits QupKake's working tree
 (`processed/*.pt`, `raw/` vs `output/` sites), excludes failures, and records
 them in `qupkake_failed.tsv`.
 
+**Amide sites.** QupKake predicts amide-type N-H (amides, anilides, ureas,
+carbamates) as acids at pKa 2-7 -- really ~13-17 -- which would make amide
+anions dominant at pH 7.4. `qupkake_protomers.py` drops those sites (and amide
+N as a base) before building states; see `dropped_sites.tsv` per shard and
+`--keep-amide-sites`. A QupKake run enumerated before this filter (2026-10-08)
+is rebuilt from its SDFs, without rerunning xtb:
+
+```bash
+llb reenumerate parents protomers protomers_fixed
+```
+
 ## 4. Names
 
 ```bash

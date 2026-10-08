@@ -24,8 +24,10 @@ What it answers:
 
 Both tools' site indices are mapped onto the parent as written in the shard
 (substructure match), so nothing assumes the two kept the same atom order.
-MolGpKa sites are taken as the triage used them (kept=1: amide-N bases
-dropped). Agreement here is model against model -- neither is measured pKa.
+MolGpKa sites are taken as the triage used them (kept=1), and QupKake's
+through the same filter the QupKake path applies (IMPLAUSIBLE_SITES; --raw
+to see QupKake's sites as predicted). sites.tsv lists every QupKake site
+either way, with qupkake_site_dropped=1 on the filtered ones. Agreement here is model against model -- neither is measured pKa.
 """
 from __future__ import annotations
 
@@ -43,7 +45,7 @@ sys.path.insert(0, str(HERE.parent / "run_qupkake"))
 from rdkit import Chem, RDLogger  # noqa: E402
 from rdkit.Chem.MolStandardize import rdMolStandardize  # noqa: E402
 
-from qupkake_protomers import Site, parse_qupkake_sdf  # noqa: E402
+from qupkake_protomers import Site, implausible_sites, parse_qupkake_sdf  # noqa: E402
 
 RDLogger.DisableLog("rdApp.*")
 
@@ -128,6 +130,9 @@ def main(argv=None) -> int:
                     help="an all-QupKake run (llb submit-qupkake) over the same parents")
     ap.add_argument("-o", "--outdir", type=Path, default=Path("compare"))
     ap.add_argument("--no-plots", action="store_true")
+    ap.add_argument("--raw", action="store_true",
+                    help="compare QupKake's sites as predicted, without the "
+                         "implausible-site filter both pipeline paths apply")
     args = ap.parse_args(argv)
 
     settings = json.loads((args.triage / "settings.json").read_text())
@@ -159,6 +164,7 @@ def main(argv=None) -> int:
 
     # ---- QupKake sites ---------------------------------------------------------------
     qk_sites: dict[str, list[Site]] = {}
+    qk_raw: dict[str, list[Site]] = {}
     qk_failed: set[str] = set()
     qk_seen: set[str] = set()
     unmapped = 0
@@ -173,6 +179,12 @@ def main(argv=None) -> int:
                 qk_failed |= {r["name"] for r in csv.DictReader(fh, delimiter="\t")}
         sdf = d / "qupkake_work" / "output" / "qupkake_output.sdf"
         if not sdf.exists():
+            # without the SDF there are no QupKake pKas to compare: never let
+            # these parents pass as "QupKake found no sites"
+            print(f"  ! {d}: no qupkake_work/output/qupkake_output.sdf; its parents are "
+                  f"left out", file=sys.stderr)
+            with open(d / "protomers.csv") as fh:
+                qk_failed |= {r["parent_name"] for r in csv.DictReader(fh)}
             continue
         for pid, (mol, sites) in parse_qupkake_sdf(sdf).items():
             if pid not in parent_mol:
@@ -182,7 +194,11 @@ def main(argv=None) -> int:
                 unmapped += 1
                 qk_failed.add(pid)
                 continue
-            qk_sites[pid] = [Site(mp[s.idx], s.kind, s.pka) for s in sites if s.idx in mp]
+            raw = [Site(mp[s.idx], s.kind, s.pka) for s in sites if s.idx in mp]
+            qk_raw[pid] = raw
+            # the QupKake path drops these before building states; so does this
+            bad = {} if args.raw else implausible_sites(parent_mol[pid])
+            qk_sites[pid] = [s for s in raw if (s.idx, s.kind) not in bad]
     # QupKake finished on a parent but listed no site: a genuine "no sites"
     for pid in qk_seen - set(qk_sites) - qk_failed:
         qk_sites[pid] = []
@@ -195,7 +211,8 @@ def main(argv=None) -> int:
     for pid in both:
         mol = parent_mol[pid]
         a = {(s.idx, s.kind): s.pka for s in mg_sites.get(pid, [])}
-        b = {(s.idx, s.kind): s.pka for s in qk_sites[pid]}
+        b = {(s.idx, s.kind): s.pka for s in qk_raw.get(pid, qk_sites[pid])}
+        used = {(s.idx, s.kind) for s in qk_sites[pid]}
         for key in sorted(set(a) | set(b)):
             cls = site_class(mol, key[0])
             pa, pb = a.get(key), b.get(key)
@@ -206,7 +223,8 @@ def main(argv=None) -> int:
                               "delta": "" if None in (pa, pb) else f"{pa - pb:+.2f}",
                               "found_by": "both" if None not in (pa, pb) else
                                           ("molgpka" if pb is None else "qupkake"),
-                              "context": context(mol, key[0])})
+                              "context": context(mol, key[0]),
+                              "qupkake_site_dropped": int(key in b and key not in used)})
             if None not in (pa, pb):
                 deltas[cls].append(pa - pb)
     with open(args.outdir / "sites.tsv", "w", newline="") as fh:
@@ -235,7 +253,7 @@ def main(argv=None) -> int:
         mid = sorted(phs)[len(phs) // 2]
         row[f"qupkake_amide_anion_{mid:g}"] = int(any(
             k == "acidic" and site_class(parent_mol[pid], a) == "amide / imide NH"
-            for a, k in dominant(qs, mid)))
+            for a, k in dominant(qk_raw.get(pid, qs), mid)))
         parent_rows.append(row)
     with open(args.outdir / "parents.tsv", "w", newline="") as fh:
         w = csv.DictWriter(fh, delimiter="\t", fieldnames=list(parent_rows[0]) if parent_rows

@@ -78,6 +78,37 @@ BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 DEFAULT_STEREO_CAP = 32
 
 
+# Sites no predictor should be trusted on, dropped before any state is built
+# (both paths: QupKake here, MolGpKa in pka_triage/triage.py).
+#
+#  amide_nh_acid  N-H of an amide, anilide, urea, carbamate, hydrazide or
+#                 thioamide as an ACID. In water these are ~13-17. QupKake put
+#                 44 of them at 2.4-6.7 on Owen's set (2026-10-08), making an
+#                 amide anion the dominant state at pH 7.4 in 22 of 50 parents;
+#                 MolGpKa put some anilides at 6-7. Kept: imide N-H (between
+#                 two C=O, ~9-10) and N-sulfonyl N-H (acylsulfonamide ~4-5,
+#                 sulfonylurea), which really are acidic.
+#  amide_n_base   any N on C=O/C=S or S(=O)=O as a BASE. N-protonating an amide
+#                 is ~ -1; MolGpKa's patterns put anilides at 3.9-6.
+# --keep-amide-sites turns both off.
+IMPLAUSIBLE_SITES = {
+    ("acidic", "amide_nh_acid"): Chem.MolFromSmarts(
+        "[#7;!H0;$([#7]-[#6]=[#8,#16]);!$([#7](-[#6]=[#8,#16])-[#6]=[#8,#16]);"
+        "!$([#7]-[#16](=[#8])=[#8])]"),
+    ("basic", "amide_n_base"): Chem.MolFromSmarts(
+        "[#7;$([#7]-[#6]=[#8,#16]),$([#7]-[#16](=[#8])=[#8])]"),
+}
+
+
+def implausible_sites(mol: Chem.Mol) -> dict[tuple[int, str], str]:
+    """{(atom index, kind): reason} for sites on `mol` that are dropped."""
+    out = {}
+    for (kind, reason), patt in IMPLAUSIBLE_SITES.items():
+        for m in mol.GetSubstructMatches(patt):
+            out[(m[0], kind)] = reason
+    return out
+
+
 # --------------------------------------------------------------------------
 # data model
 # --------------------------------------------------------------------------
@@ -930,6 +961,9 @@ def main(argv=None):
                          "QupKake once per parent, propagate protomers across "
                          "the isomers; 'keep' = trust the SDF's 3D-derived "
                          "tags; 'strip' = flatten")
+    ap.add_argument("--keep-amide-sites", action="store_true",
+                    help="keep QupKake's amide N-H acid / amide N base sites "
+                         "(dropped by default; see IMPLAUSIBLE_SITES)")
     ap.add_argument("--no-neutralize", action="store_true",
                     help="skip input neutralization (QupKake wants neutral input)")
     ap.add_argument("--keep-largest-fragment", action="store_true", default=True)
@@ -1033,6 +1067,20 @@ def main(argv=None):
     grouped = parse_qupkake_sdf(sdf_path)
     n_records = sum(len(s) for _, s in grouped.values())
     print(f"      {n_records} site(s) across {len(grouped)} molecule(s)")
+    dropped_sites = []
+    if not args.keep_amide_sites:
+        for name, (mol, sites) in grouped.items():
+            bad = implausible_sites(mol)
+            keep = [s for s in sites if (s.idx, s.kind) not in bad]
+            dropped_sites += [(name, s.idx, s.kind, s.pka, bad[(s.idx, s.kind)])
+                              for s in sites if (s.idx, s.kind) in bad]
+            grouped[name] = (mol, keep)
+        if dropped_sites:
+            print(f"      dropped {len(dropped_sites)} implausible site(s): "
+                  f"{dict(Counter(r for *_, r in dropped_sites))} (dropped_sites.tsv)")
+    with open(outdir / "dropped_sites.tsv", "w") as fh:
+        fh.write("name\tidx\tkind\tpka\treason\n")
+        fh.writelines(f"{n}\t{i}\t{k}\t{p:.3f}\t{r}\n" for n, i, k, p, r in dropped_sites)
 
     qk_failed = audit_qupkake(sdf_path.parent.parent, sdf_path.name,
                               [n for _, n in inputs], grouped)
@@ -1128,6 +1176,8 @@ def main(argv=None):
     }
     stats["input"]["molecules_rejected"] = len(failed)
     stats["input"]["qupkake_failed"] = dict(Counter(qk_failed.values()))
+    stats["input"]["sites_dropped_as_implausible"] = dict(
+        Counter(r for *_, r in dropped_sites))
     stats["input"]["states_failed_to_build"] = len(build_failures)
     stats["input"]["parents_on_qupkake_skeleton"] = len(set(fallback_parents))
     stats["protomers"]["states_dropped_by_filters"] = dropped_states

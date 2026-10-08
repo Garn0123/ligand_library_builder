@@ -29,10 +29,18 @@ as the QupKake path), `--coupling-bonds` (3), `--coupled route|ignore`,
 `-o` is refused. Merge refuses QupKake shards run with a different pH list,
 margin, min population or max states.
 
-Also filtered: MolGpKa's base patterns match amide, thioamide and sulfonamide
-N (anilides 3.9-6.0, benzamide 3.4). Protonating an amide N is about -1, so
-those sites are dropped by default (`--keep-amide-bases` keeps them). They are
-listed in `decisions.tsv` (dropped_sites) and in `sites.tsv` with kept=0.
+Also filtered, in BOTH paths (`qupkake_protomers.IMPLAUSIBLE_SITES`,
+`--keep-amide-sites` turns it off):
+- amide-type N as a base (MolGpKa: anilides 3.9-6.0, benzamide 3.4; real ~ -1);
+- amide-type N-H as an acid (amides, anilides, ureas, carbamates, hydrazides,
+  thioamides; real ~13-17). On Owen's 50 QupKake put 44 of these at 2.4-6.7,
+  so the all-QupKake library had an amide ANION as the dominant state at
+  pH 7.4 in 22 of 50 parents; all 5 "settled but disagree" parents were this.
+  Imide N-H and N-sulfonyl N-H are kept (genuinely acidic).
+Dropped sites are listed per shard in `dropped_sites.tsv` (QupKake path) and
+`decisions.tsv` / `sites.tsv` kept=0 (triage). QupKake runs enumerated before
+this filter are rebuilt from their SDFs with `llb reenumerate` (no xtb);
+`llb merge` refuses them until then.
 
 ## Why
 

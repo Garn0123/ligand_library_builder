@@ -28,6 +28,7 @@
 #   llb merge ARGS            pka_triage/merge_protomers.py  (before names)   (PREP)
 #   llb compare ARGS          pka_triage/compare.py  (MolGpKa vs QupKake)     (PKA)
 #   llb submit-qupkake PARENTS OUT [sbatch args]                         (logs -> ./logs)
+#   llb reenumerate PARENTS QK_IN QK_OUT  rebuild protomers from QupKake's SDFs (PREP)
 #   llb names ARGS            run_qupkake/assign_names.py                (PREP)
 #   llb validate-names ARGS   DRAP's stage4/validate_names.py, at DRAP_DIR (no env)
 #   llb check-stereo SMI      run_qupkake/check_db2_stereo.py            (DB2C)
@@ -74,6 +75,7 @@ case "$step" in
     merge)          exec "$W" PREP python "$LLB_ROOT/pka_triage/merge_protomers.py" "$@" ;;
     compare)        exec "$W" PKA python "$LLB_ROOT/pka_triage/compare.py" "$@" ;;
     submit-qupkake) exec "$Q/submit_qupkake.sh" "$@" ;;
+    reenumerate)    exec "$W" PREP python "$Q/reenumerate.py" "$@" ;;
     names)          exec "$W" PREP python "$Q/assign_names.py" "$@" ;;
     validate-names)
         # stdlib only, so no env; the DRAP checkout is the one place it lives
