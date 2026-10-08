@@ -130,7 +130,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--shards-dir", required=True,
-                    help="OUT_DIR of the QupKake array (holds shard_NNNNN/)")
+                    help="OUT_DIR of the QupKake array, or of llb merge (holds shard_NNNNN/)")
     ap.add_argument("--parents", default=None,
                     help="prepare_parents.py --outdir: completeness check + per-bin attrition")
     ap.add_argument("-o", "--outdir", default="library")
@@ -237,7 +237,10 @@ def main(argv=None) -> int:
                     "ph_values": head["ph_values"],
                     "population_estimate": head["population_estimate"],
                     "invertomer_of": inv if inv != name else "",
-                    "note": head["note"], "smiles": smi})
+                    "note": head["note"], "smiles": smi,
+                    # merged shards (pka_triage/merge_protomers.py) say which
+                    # predictor decided the parent; plain QupKake shards don't
+                    "site_source": head.get("site_source") or "qupkake"})
             p_new += 1
 
     # ---- invariants 1-3, asserted before anything final is written -----------
@@ -263,7 +266,7 @@ def main(argv=None) -> int:
     cols = ["name", "base_id", "parent_id", "zinc_id", "input_name", "protomer_index",
             "stereo_index", "net_charge",
             "heavy_atoms", "ph_values", "population_estimate", "invertomer_of", "note",
-            "smiles"]
+            "smiles", "site_source"]
     with open(outdir / "library.tsv", "w", newline="") as fh:
         w = csv.DictWriter(fh, delimiter="\t", fieldnames=cols)
         w.writeheader()

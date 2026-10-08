@@ -1,7 +1,38 @@
 # pKa triage: MolGpKa first, QupKake only where it matters
 
-Branch `feat/pka-triage`. Status 2026-10-08: environment + MolGpKa port done and
-checked; triage step, merge and validation harness not written yet.
+Branch `feat/pka-triage`. Status 2026-10-08: environment, MolGpKa port, triage
+and merge written and tested end to end with MOCK QupKake output (no real
+QupKake or Great Lakes run yet). Validation harness not written yet.
+
+## Running it
+
+```
+llb parents my.smi -o parents                         # as before
+llb triage parents -o triage                          # MolGpKa, ~5 ms/parent, one core
+llb submit-qupkake triage/routed protomers_qk --time=01:30:00
+llb merge --parents parents --triage triage --qupkake protomers_qk -o merged
+llb names --shards-dir merged --parents parents -o library
+```
+
+`triage/routed/` is an ordinary parents directory (shards of
+`--qupkake-shard-size`, default 10, plus `preflight.smi` for timing). For a big
+library, run slices `--part K/N` as separate jobs, then `--finish`.
+`triage/stats.json` gives the routed fraction and what it would have been at
+other `--route-window` values. `library.tsv` has a `site_source` column:
+molgpka, qupkake or molgpka_fallback. The fallback is used when QupKake failed
+on a routed parent; `--on-qupkake-fail drop` drops those parents instead.
+
+Settings: `--ph` (6.4 7.4 8.4), `--route-window` (1.5), `--margin` (1.0, same
+as the QupKake path), `--coupling-bonds` (3), `--coupled route|ignore`,
+`--min-population`, `--max-states`, `--max-ambiguous`. They are recorded in
+`triage/settings.json`; a second run with different settings into the same
+`-o` is refused. Merge refuses QupKake shards run with a different pH list,
+margin, min population or max states.
+
+Also filtered: MolGpKa's base patterns match amide, thioamide and sulfonamide
+N (anilides 3.9-6.0, benzamide 3.4). Protonating an amide N is about -1, so
+those sites are dropped by default (`--keep-amide-bases` keeps them). They are
+listed in `decisions.tsv` (dropped_sites) and in `sites.tsv` with kept=0.
 
 ## Why
 
@@ -97,12 +128,11 @@ harness.
 
 ## Next steps
 
-1. `pka_triage/triage.py`: per parent, MolGpKa sites -> route decision
-   (`decided` / `near_window` / `coupled`, with the nearest |pKa - pH|), and for
-   decided parents the protomers written through the existing state model, in
-   the shard schema `assign_names.py` reads. `routed.tsv` goes to the QupKake
-   array.
-2. A merge step so `llb names` sees one result per parent.
-3. Harness on ~10k parents run both ways: site-set agreement, pKa scatter by
-   site class, protomer-set agreement at each pH, and the fraction routed as a
-   function of the routing threshold (curve, not one number).
+1. First real run: Owen's 50, `llb triage` then QupKake on `triage/routed`,
+   to check that QupKake's real shard outputs merge cleanly.
+2. Harness on ~10k parents run both ways (`--route-window 99` routes
+   everything, so triage's protomers.csv and sites.tsv sit next to QupKake's
+   for every parent): site-set agreement, pKa scatter by site class,
+   protomer-set agreement per pH, routed fraction against the window.
+3. A SLURM wrapper for `triage --part` once a library is big enough to need it
+   (1M parents is about 1.5 CPU-hours).

@@ -133,6 +133,21 @@ class Protomer:
 # --------------------------------------------------------------------------
 # input / standardization
 # --------------------------------------------------------------------------
+# protomers.csv, read by assign_names.py and pka_triage/merge_protomers.py.
+# pka_triage/triage.py writes the same columns plus its own at the end.
+PROTOMER_COLUMNS = ["protomer_name", "parent_name", "smiles", "net_charge",
+                    "n_pos_atoms", "n_neg_atoms", "zwitterion", "ph_values",
+                    "population_estimate", "n_changes", "protomer_index",
+                    "stereo_index", "note"]
+
+
+def protomer_row(p: Protomer) -> list:
+    return [p.name, p.parent, p.smiles, p.charge, p.n_pos, p.n_neg,
+            int(p.is_zwitterion), ";".join(f"{v:g}" for v in sorted(set(p.ph_values))),
+            f"{p.population:.4f}", len(p.changes), p.protomer_index, p.stereo_index,
+            p.note]
+
+
 def read_smi(path: Path, delim: str | None = None) -> list[tuple[str, str]]:
     """Read a 2-column SMILES file (SMILES NAME), no header."""
     out, seen = [], Counter()
@@ -545,6 +560,82 @@ def enumerate_states(sites: list[Site], ph: float, margin: float,
             else:
                 pop *= (1.0 - f)
         yield tuple(sorted(changes)), pop
+
+
+def unchanged_protomers(name: str, isomers: list[Chem.Mol],
+                        ph_values: list[float]) -> list[Protomer]:
+    """No ionizable site predicted: carry each isomer through unchanged."""
+    return [Protomer(parent=name, smiles=Chem.MolToSmiles(iso),
+                     charge=Chem.GetFormalCharge(iso), ph_values=list(ph_values),
+                     population=1.0, note="no_sites_predicted", stereo_index=k)
+            for k, iso in enumerate(isomers)]
+
+
+def build_protomers(name: str, isomers: list[Chem.Mol], ref: Chem.Mol,
+                    sites: list[Site], ph_values: list[float], margin: float,
+                    min_population: float, max_states: int, max_ambiguous: int,
+                    stereo: str, fallback_note: str = "built_on_qupkake_tautomer"):
+    """One parent's sites -> its protomers at every pH, for every stereoisomer.
+
+    `ref` is the molecule the site indices refer to (QupKake's SDF mol, or
+    MolGpKa's re-parsed parent); `isomers` are the parent's input stereoisomers.
+    Returns (protomers, states dropped by the filters, states that failed to
+    build, whether the isomers themselves could be used).
+    """
+    # Build on the isomer itself where possible: it already carries the
+    # right stereo in the site predictor's atom order, so nothing has to be
+    # transferred and E/Z survives.  Fall back to `ref` (with stereo
+    # reconciliation) when the predictor rewrote the molecule (QupKake -t).
+    use_isomer = skeleton_matches(ref, isomers[0])
+    dropped_states = build_failures = 0
+
+    # 1. collect unique protonation STATES for the parent, judged on the
+    #    first isomer so a state gets one index across every isomer
+    states: dict[tuple, Protomer] = {}
+    for ph in ph_values:
+        found = []
+        for changes, pop in enumerate_states(sites, ph, margin, max_ambiguous):
+            if pop < min_population:
+                dropped_states += 1
+                continue
+            probe = apply_changes(isomers[0] if use_isomer else ref, changes,
+                                  isomers[0], stereo)
+            if probe is None:
+                build_failures += 1
+                continue
+            found.append((changes, pop, probe))
+        found.sort(key=lambda x: -x[1])
+        if len(found) > max_states:
+            dropped_states += len(found) - max_states
+            found = found[:max_states]
+        for changes, pop, probe in found:
+            if changes in states:
+                states[changes].ph_values.append(ph)
+                states[changes].population = max(states[changes].population, pop)
+            else:
+                states[changes] = Protomer(
+                    parent=name, smiles=probe,
+                    charge=Chem.GetFormalCharge(Chem.MolFromSmiles(probe)),
+                    ph_values=[ph], population=pop, changes=changes)
+
+    # 2. apply every surviving state to every stereoisomer
+    emitted: list[Protomer] = []
+    ordered = sorted(states.values(), key=lambda x: (-x.population, x.smiles))
+    for p_idx, state in enumerate(ordered):
+        seen_here: set = set()
+        for k, iso in enumerate(isomers):
+            out_smi = apply_changes(iso if use_isomer else ref, state.changes,
+                                    iso, stereo)
+            if out_smi is None or (k, out_smi) in seen_here:
+                continue
+            seen_here.add((k, out_smi))
+            emitted.append(Protomer(
+                parent=name, smiles=out_smi,
+                charge=Chem.GetFormalCharge(Chem.MolFromSmiles(out_smi)),
+                ph_values=list(state.ph_values), population=state.population,
+                changes=state.changes, stereo_index=k, protomer_index=p_idx,
+                note="" if use_isomer else fallback_note))
+    return emitted, dropped_states, build_failures, use_isomer
 
 
 # --------------------------------------------------------------------------
@@ -971,76 +1062,19 @@ def main(argv=None):
         if name in qk_failed:
             continue
         isomers = stereo_sets[name]
-        emitted: list[Protomer] = []
 
         if name not in grouped:
-            # no ionizable site predicted -- carry each isomer through unchanged
-            for k, iso in enumerate(isomers):
-                iso_smi = Chem.MolToSmiles(iso)
-                emitted.append(Protomer(
-                    parent=name, smiles=iso_smi,
-                    charge=Chem.GetFormalCharge(iso),
-                    ph_values=list(args.ph), population=1.0,
-                    note="no_sites_predicted", stereo_index=k))
-            by_parent[name] = emitted
+            by_parent[name] = unchanged_protomers(name, isomers, args.ph)
             continue
 
         ref, sites = grouped[name]
-
-        # Build on the isomer itself where possible: it already carries the
-        # right stereo in QupKake's own atom order, so nothing has to be
-        # transferred and E/Z survives.  Fall back to the QupKake skeleton
-        # (with stereo reconciliation) when -t rewrote the molecule.
-        use_isomer = skeleton_matches(ref, isomers[0])
-        if not use_isomer:
+        emitted, n_drop, n_fail, used_isomer = build_protomers(
+            name, isomers, ref, sites, args.ph, args.margin, args.min_population,
+            args.max_states, args.max_ambiguous, args.stereo)
+        dropped_states += n_drop
+        build_failures += [name] * n_fail
+        if not used_isomer:
             fallback_parents.append(name)
-
-        # 3a. collect unique protonation STATES for the parent, judged on the
-        #     first isomer so a state gets one index across every isomer
-        states: dict[tuple, Protomer] = {}
-        for ph in args.ph:
-            found = []
-            for changes, pop in enumerate_states(sites, ph, args.margin,
-                                                 args.max_ambiguous):
-                if pop < args.min_population:
-                    dropped_states += 1
-                    continue
-                probe = apply_changes(isomers[0] if use_isomer else ref, changes,
-                                      isomers[0], args.stereo)
-                if probe is None:
-                    build_failures.append(name)
-                    continue
-                found.append((changes, pop, probe))
-            found.sort(key=lambda x: -x[1])
-            if len(found) > args.max_states:
-                dropped_states += len(found) - args.max_states
-                found = found[:args.max_states]
-            for changes, pop, probe in found:
-                if changes in states:
-                    states[changes].ph_values.append(ph)
-                    states[changes].population = max(states[changes].population, pop)
-                else:
-                    states[changes] = Protomer(
-                        parent=name, smiles=probe,
-                        charge=Chem.GetFormalCharge(Chem.MolFromSmiles(probe)),
-                        ph_values=[ph], population=pop, changes=changes)
-
-        # 3b. apply every surviving state to every stereoisomer
-        ordered = sorted(states.values(), key=lambda x: (-x.population, x.smiles))
-        for p_idx, state in enumerate(ordered):
-            seen_here: set[str] = set()
-            for k, iso in enumerate(isomers):
-                out_smi = apply_changes(iso if use_isomer else ref, state.changes,
-                                        iso, args.stereo)
-                if out_smi is None or (k, out_smi) in seen_here:
-                    continue
-                seen_here.add((k, out_smi))
-                emitted.append(Protomer(
-                    parent=name, smiles=out_smi,
-                    charge=Chem.GetFormalCharge(Chem.MolFromSmiles(out_smi)),
-                    ph_values=list(state.ph_values), population=state.population,
-                    changes=state.changes, stereo_index=k, protomer_index=p_idx,
-                    note="" if use_isomer else "built_on_qupkake_tautomer"))
         by_parent[name] = emitted
 
     # ---- 4. name + write --------------------------------------------------
@@ -1068,16 +1102,8 @@ def main(argv=None):
 
     with open(outdir / "protomers.csv", "w", newline="") as fh:
         w = csv.writer(fh)
-        w.writerow(["protomer_name", "parent_name", "smiles", "net_charge",
-                    "n_pos_atoms", "n_neg_atoms", "zwitterion", "ph_values",
-                    "population_estimate", "n_changes", "protomer_index",
-                    "stereo_index", "note"])
-        for p in protomers:
-            w.writerow([p.name, p.parent, p.smiles, p.charge, p.n_pos, p.n_neg,
-                        int(p.is_zwitterion),
-                        ";".join(f"{v:g}" for v in sorted(set(p.ph_values))),
-                        f"{p.population:.4f}", len(p.changes),
-                        p.protomer_index, p.stereo_index, p.note])
+        w.writerow(PROTOMER_COLUMNS)
+        w.writerows(protomer_row(p) for p in protomers)
 
     with open(outdir / "name_map.tsv", "w") as fh:
         fh.write("protomer_name\tparent_name\tnet_charge\tph_values"

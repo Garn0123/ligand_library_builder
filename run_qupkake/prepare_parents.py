@@ -74,6 +74,44 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def write_shards(outdir: Path, parents: list[dict], shard_size: int, seed: int,
+                 preflight: int) -> tuple[list, list]:
+    """Shuffle, cut into shards, write shards.tsv (+ .meta) and preflight.smi.
+
+    Shared with pka_triage/triage.py, which writes the parents it routes to
+    QupKake as a parents directory of the same shape.
+    """
+    (outdir / "shards").mkdir(parents=True, exist_ok=True)
+    order = list(parents)
+    random.Random(seed).shuffle(order)
+    shards = [order[i:i + shard_size] for i in range(0, len(order), shard_size)]
+    rows = []
+    for i, shard in enumerate(shards):
+        p = outdir / "shards" / f"shard_{i:05d}.smi"
+        p.write_text("".join(f"{r['smiles']} {r['parent_id']}\n" for r in shard))
+        rows.append((i, p.relative_to(outdir), len(shard), sha256(p)))
+    with open(outdir / "shards.tsv", "w") as fh:
+        fh.write("index\tpath\tn_parents\tsha256\n")
+        fh.writelines(f"{i}\t{p}\t{n}\t{h}\n" for i, p, n, h in rows)
+    (outdir / "shards.tsv.meta").write_text(
+        f"checksum={sha256(outdir / 'shards.tsv')}\nn_shards={len(rows)}\n"
+        f"shard_size={shard_size}\nseed={seed}\nn_parents={len(parents)}\n")
+
+    # Preflight set: round-robin across bins so the largest molecules -- the
+    # slowest for xtb and the likeliest to fail -- are in the timing run.
+    per_bin = defaultdict(list)
+    for r in order:
+        per_bin[int(r["heavy_atoms"])].append(r)
+    pre, bins = [], sorted(per_bin, reverse=True)
+    while len(pre) < min(preflight, len(order)):
+        for b in bins:
+            if per_bin[b] and len(pre) < preflight:
+                pre.append(per_bin[b].pop())
+    (outdir / "preflight.smi").write_text(
+        "".join(f"{r['smiles']} {r['parent_id']}\n" for r in pre))
+    return rows, pre
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -156,33 +194,7 @@ def main(argv=None) -> int:
         fh.write("input_name\treason\tdetail\n")
         fh.writelines(f"{a}\t{b}\t{c}\n" for a, b, c in rejected)
 
-    order = list(parents)
-    random.Random(args.seed).shuffle(order)
-    shards = [order[i:i + args.shard_size] for i in range(0, len(order), args.shard_size)]
-    rows = []
-    for i, shard in enumerate(shards):
-        p = outdir / "shards" / f"shard_{i:05d}.smi"
-        p.write_text("".join(f"{r['smiles']} {r['parent_id']}\n" for r in shard))
-        rows.append((i, p.relative_to(outdir), len(shard), sha256(p)))
-    with open(outdir / "shards.tsv", "w") as fh:
-        fh.write("index\tpath\tn_parents\tsha256\n")
-        fh.writelines(f"{i}\t{p}\t{n}\t{h}\n" for i, p, n, h in rows)
-    (outdir / "shards.tsv.meta").write_text(
-        f"checksum={sha256(outdir / 'shards.tsv')}\nn_shards={len(rows)}\n"
-        f"shard_size={args.shard_size}\nseed={args.seed}\nn_parents={len(parents)}\n")
-
-    # Preflight set: round-robin across bins so the largest molecules -- the
-    # slowest for xtb and the likeliest to fail -- are in the timing run.
-    per_bin = defaultdict(list)
-    for r in order:
-        per_bin[r["heavy_atoms"]].append(r)
-    pre, bins = [], sorted(per_bin, reverse=True)
-    while len(pre) < min(args.preflight, len(order)):
-        for b in bins:
-            if per_bin[b] and len(pre) < args.preflight:
-                pre.append(per_bin[b].pop())
-    (outdir / "preflight.smi").write_text(
-        "".join(f"{r['smiles']} {r['parent_id']}\n" for r in pre))
+    rows, pre = write_shards(outdir, parents, args.shard_size, args.seed, args.preflight)
 
     # ---- report -----------------------------------------------------------
     reasons = Counter(r for _, r, _ in rejected)
