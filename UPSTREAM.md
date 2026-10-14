@@ -95,6 +95,15 @@ llb sample --heavy 14-28 --local $ZINC_DATA/zinc22 --urls urls_2d.txt --outdir s
 
 (`llb fetch` takes `WGET` and `PARALLEL` from the config.)
 
+**Proportional to bin size:** `--total N` in place of `--per-bin` draws N
+molecules uniformly over all the bins together, so each bin's share matches its
+share of ZINC's molecules (one pass; still one `Hxx.smi` per bin, plus
+`POOLED.done` with each bin's population and count):
+
+```bash
+llb sample --heavy 18-22 --total 10000 --local $ZINC_DATA/zinc22 --urls urls_2d.txt --outdir samples
+```
+
 `--local` is one reservoir pass over every file in the bin: every molecule
 equally likely, the logP mix right by construction, about 30 min for H28. With
 `--urls` it refuses to sample a bin that is missing files.
