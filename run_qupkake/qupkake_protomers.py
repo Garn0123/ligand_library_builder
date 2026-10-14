@@ -102,6 +102,13 @@ DEFAULT_STEREO_CAP = 32
 #                 with 1generate failed again without them: its scaffold,
 #                 not its protonation, defeats conformer generation.)
 #                 N bonded to anything but C/H, or to C=N/O/S, is left alone.
+#  oxygen_base    any O as a BASE: C(=O)[OH2+], protonated nitro [N+](=O)O,
+#                 oxonium ions. Water (Reich): protonated nitrobenzene -12.4,
+#                 protonated benzoic acid -7.8, Me2OH+ -3.8, MeOH2+ -2.2.
+#                 QupKake produced these on Owen's set (rebuild of 2026-10-14).
+#  alcohol_oh_acid  O-H on an sp3 carbon as an ACID (alkoxide). Water (Reich):
+#                 methanol 16, tert-butanol 20. Phenols (10.0), enols (10.5-
+#                 10.9), acids, oximes and hydroxamic acids are left alone.
 #  amide_n_base   any N on C=O/C=S or S(=O)=O as a BASE. Amides protonate on
 #                 O, not N, and even that is pKa -0.62 (acetamide, water);
 #                 MolGpKa's patterns put anilides at 3.9-6.
@@ -112,6 +119,8 @@ IMPLAUSIBLE_SITES = {
         "!$([#7]-[#16](=[#8])=[#8])]"),
     ("acidic", "amine_nh_acid"): Chem.MolFromSmarts(
         "[#7X3;!a;!H0;!$([#7]~[!#6;!#1]);!$([#7]-[#6]=,#[#7,#8,#16])]"),
+    ("basic", "oxygen_base"): Chem.MolFromSmarts("[#8]"),
+    ("acidic", "alcohol_oh_acid"): Chem.MolFromSmarts("[#8X2;H1][CX4]"),
     ("basic", "amide_n_base"): Chem.MolFromSmarts(
         "[#7;$([#7]-[#6]=[#8,#16]),$([#7]-[#16](=[#8])=[#8])]"),
 }
@@ -119,7 +128,8 @@ IMPLAUSIBLE_SITES = {
 
 # Bumped whenever IMPLAUSIBLE_SITES changes, and written into every output
 # that depends on it, so runs filtered by different rules are never mixed.
-SITE_FILTER_VERSION = 2          # 1: amide rules (2026-10-08); 2: + amine_nh_acid
+SITE_FILTER_VERSION = 3          # 1: amide rules (2026-10-08); 2: + amine_nh_acid;
+                                 # 3: + oxygen_base, alcohol_oh_acid (2026-10-14)
 
 
 def implausible_sites(mol: Chem.Mol) -> dict[tuple[int, str], str]:

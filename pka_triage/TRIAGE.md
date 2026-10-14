@@ -48,7 +48,13 @@ Sources for the amide numbers (checked 2026-10-08):
 | 8.30 | phthalimide N-H | water | Ripin & Evans, "Imides" |
 | 38 (extrapolated) / 41 | ammonia N-H | water / DMSO | Ripin & Evans, "Amines" |
 | 44 / 30.6 / 25.0 | pyrrolidine / aniline / diphenylamine N-H | DMSO | Reich DMSO table, "Amines (NH)" |
+| -12.4 / -7.8 / -3.8 / -2.2 | protonated nitrobenzene / benzoic acid / dimethyl ether / methanol | water | Reich, *Equilibrium pKa Table (H2O)*, "Oxygen Acids" |
+| 16 / 20 (approximate) / 10.0 | methanol / tert-butanol / phenol O-H | water | same page |
 | -0.62 +/- 0.07, -0.42, -0.28 | protonated acetamide, N-methylacetamide, N,N-dimethylacetamide | water, 298 K | Grant, McTigue & Ward, *Aust. J. Chem.* 1983, 36, 2211-2218, doi:10.1071/CH9832211 |
+
+The oxygen rows back `oxygen_base` and `alcohol_oh_acid` (site filter v3,
+2026-10-14): Owen's rebuild had C(=O)[OH2+], a protonated nitro group and an
+alkoxide among QupKake's protomers. Phenols and enols stay.
 
 The amine rows back `amine_nh_acid` (site filter v2, 2026-10-08): Owen's set
 produced [NH-]/[N-] amine-anion protomers. (The three that then failed

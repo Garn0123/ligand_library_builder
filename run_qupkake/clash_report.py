@@ -58,6 +58,10 @@ def records(path):
             f = line.split()
             if not f:
                 continue
+            if section == "MOLECULE" and "Name" not in header:
+                header["Name"] = f[0]               # mol2 title: the molecule name
+                section = "MOLECULE_DONE"
+                continue
             if section == "ATOM":
                 atoms.append((f[1], float(f[2]), float(f[3]), float(f[4]), f[5]))
             elif section == "BOND":
