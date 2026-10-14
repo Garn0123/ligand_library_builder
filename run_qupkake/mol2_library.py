@@ -39,6 +39,10 @@ labels no DOCK reader parses:
 Every value is one whitespace-free token ("-" when empty): DOCK splits these
 lines on whitespace and expects exactly three fields.
 
+--one-per-molecule keeps one name per input molecule instead of every
+protomer and stereoisomer: the protomer most populated at --ph (7.4), then the
+lowest protomer and stereo index (index.tsv says why in `representative`).
+
 Writes OUT/<prefix>_NNNNN.mol2 (N molecules each, sorted by name, so a parent's
 protomers and stereoisomers sit together), OUT/index.tsv (every header value
 plus its shard), and OUT/MANIFEST.tsv (shard, count, first/last name, sha256).
@@ -192,6 +196,37 @@ def header_block(fields: dict, hdb: dict) -> str:
     return "\n" + "".join(lines) + "\n"
 
 
+def pick_representatives(library: dict[str, dict], available: set[str], ph: float):
+    """One name per parent: -> ({parent_id: (name, reason)}, [parents with no record]).
+
+    Order: populated at `ph` first; then highest population_estimate; then
+    lowest protomer_index, stereo_index. population_estimate is the protomer's
+    best population over the pH values it is listed at (qupkake_protomers.py),
+    not its population at exactly `ph` -- an approximation, recorded as such.
+    Names without a db2/mol2 record (failed builds) are skipped, so a parent is
+    lost only if none of its names built.
+    """
+    by_parent: dict[str, list[dict]] = defaultdict(list)
+    for row in library.values():
+        by_parent[row["parent_id"]].append(row)
+
+    def at_ph(r):
+        return any(abs(float(x) - ph) < 1e-6 for x in r.get("ph_values", "").split(";") if x)
+
+    picks, missing = {}, []
+    for pid, rows in sorted(by_parent.items()):
+        cand = [r for r in rows if r["name"] in available]
+        if not cand:
+            missing.append(pid)
+            continue
+        best = min(cand, key=lambda r: (not at_ph(r), -float(r.get("population_estimate") or 0),
+                                        int(r["protomer_index"]), int(r["stereo_index"]), r["name"]))
+        reason = (f"most populated at pH {ph:g}" if at_ph(best)
+                  else f"no protomer listed at pH {ph:g}; most populated overall")
+        picks[pid] = (best["name"], reason)
+    return picks, missing
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -201,6 +236,12 @@ def main(argv=None) -> int:
     ap.add_argument("--shard-size", type=int, default=1000, help="molecules per mol2 file")
     ap.add_argument("--prefix", default="library")
     ap.add_argument("--charge-tol", type=float, default=0.05)
+    ap.add_argument("--one-per-molecule", action="store_true",
+                    help="write one record per input molecule (parent): the protomer most "
+                         "populated at --ph, then its first stereoisomer; see "
+                         "pick_representatives for the exact order")
+    ap.add_argument("--ph", type=float, default=7.4,
+                    help="with --one-per-molecule: the pH the representative is chosen at")
     args = ap.parse_args(argv)
     if args.shard_size < 1:
         raise SystemExit("--shard-size must be >= 1")
@@ -222,7 +263,14 @@ def main(argv=None) -> int:
         library = {r["name"]: r for r in csv.DictReader(fh, delimiter="\t")}
 
     args.outdir.mkdir(parents=True, exist_ok=True)
-    names = sorted(chosen)
+    reason_of: dict[str, str] = {}
+    missing_parents: list[str] = []
+    if args.one_per_molecule:
+        picks, missing_parents = pick_representatives(library, set(chosen), args.ph)
+        reason_of = {name: why for name, why in picks.values()}
+        names = sorted(reason_of)
+    else:
+        names = sorted(chosen)
     index_rows, manifest, problems = [], [], Counter()
     for s, start in enumerate(range(0, len(names), args.shard_size)):
         part = names[start:start + args.shard_size]
@@ -244,6 +292,7 @@ def main(argv=None) -> int:
                 fh.write(header_block(fields, r["header"]))
                 fh.write("".join(r["body"]).rstrip("\n") + "\n")
                 index_rows.append({"name": name, "shard": path.name, "status": status,
+                                   **({"representative": reason_of[name]} if reason_of else {}),
                                    "copies_in_input": len(by_name[name]),
                                    **{k: fields.get(k, "") for k in DOCK_ORDER[1:]},
                                    **{k: r["header"].get(k, "") for k in
@@ -252,7 +301,9 @@ def main(argv=None) -> int:
         manifest.append((path.name, len(part), part[0], part[-1],
                          hashlib.sha256(path.read_bytes()).hexdigest()))
 
-    missing = sorted(set(library) - set(chosen))
+    # in --one-per-molecule mode the other names are left out on purpose; only a
+    # molecule with no record at all is missing
+    missing = missing_parents if args.one_per_molecule else sorted(set(library) - set(chosen))
     cols = list(index_rows[0])
     with open(args.outdir / "index.tsv", "w", newline="") as fh:
         w = csv.DictWriter(fh, lineterminator="\n", delimiter="\t", fieldnames=cols)
@@ -263,20 +314,28 @@ def main(argv=None) -> int:
             r["Formal_Charge"] = f"{r['Formal_Charge']:+.3f}"
             w.writerow(r)
         for n in missing:
-            w.writerow({"name": n, "status": "MISSING"})
+            w.writerow({"name": n, "status": "MISSING_MOLECULE" if args.one_per_molecule
+                        else "MISSING"})
     with open(args.outdir / "MANIFEST.tsv", "w") as fh:
         fh.write("file\tmolecules\tfirst\tlast\tsha256\n")
         fh.writelines("\t".join(map(str, m)) + "\n" for m in manifest)
 
     dup = sum(1 for rs in by_name.values() if len(rs) > 1)
-    print(f"{len(files):,} mol2 file(s), {len(chosen):,} molecule(s) -> {len(manifest):,} "
-          f"shard(s) of <= {args.shard_size:,} in {args.outdir}")
+    print(f"{len(files):,} mol2 file(s), {len(chosen):,} name(s) -> {len(names):,} record(s) in "
+          f"{len(manifest):,} shard(s) of <= {args.shard_size:,} in {args.outdir}")
+    if args.one_per_molecule:
+        why = Counter(reason_of.values())
+        print(f"  one per molecule at pH {args.ph:g}: " +
+              "; ".join(f"{v:,} {k}" for k, v in why.most_common()))
     if dup:
         print(f"  {dup:,} name(s) appeared more than once; lowest HDB_Internal_energy1 kept")
     for k, v in sorted(problems.items()):
         if v:
             print(f"  ! {k}: {v:,}")
-    if missing:
+    if missing and args.one_per_molecule:
+        print(f"  ! {len(missing):,} molecule(s) with no built name at all "
+              f"(index.tsv: MISSING_MOLECULE, listed by parent id)")
+    elif missing:
         print(f"  ! {len(missing):,} library name(s) not in any input mol2 (index.tsv: MISSING)")
     print(f"  index -> {args.outdir}/index.tsv, shards -> {args.outdir}/MANIFEST.tsv")
     return 1 if (missing or sum(problems.values())) else 0
