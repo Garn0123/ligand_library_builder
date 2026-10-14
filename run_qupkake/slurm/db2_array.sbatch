@@ -186,12 +186,17 @@ for k in $(seq 0 $((NCPUS-1))); do
     # outputpath, which is how they're set below.
     rsync -a "$RUN/out/$sid/" "$wd/" 2>/dev/null
 
+    # db2_converter's chemistry check prints one RDKit "Proton(s) added/removed"
+    # warning per conformer; squeeze_log.awk collapses each run into one counted
+    # line. pipefail keeps build_ligand's exit status as the subshell's.
     (
+      set -o pipefail
       ${timer[@]+"${timer[@]}"} "$BUILD_LIGAND" -i "$shard" \
         -n "$NCONF" --keep_max_conf \
         -m "$METHOD" --checkstereo --reseth --rotateh --dock38 \
         $flags \
-        --workingpath "$wd" --outputpath "$wd"
+        --workingpath "$wd" --outputpath "$wd" 2>&1 \
+        | awk -f "$LLB_ROOT/common/squeeze_log.awk"
     ) > "$RUN/logs/shard.$sid.out" 2>&1 &
     pids+=($!)
 done

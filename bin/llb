@@ -42,6 +42,8 @@
 #
 # Utilities:
 #   llb env TOOL CMD...       run CMD in TOOL's env (QUPKAKE, DB2C, PREP, DOCK, PKA)
+#   llb squeeze               filter stdin: collapse repeated RDKit warnings
+#                             (e.g. llb env DB2C build_ligand ... 2>&1 | llb squeeze)
 #   llb root                  print the code checkout this llb belongs to
 #   llb help                  this text
 
@@ -97,6 +99,7 @@ case "$step" in
     clash-report)   exec python3 "$Q/clash_report.py" "$@" ;;
     chunk)          exec "$LLB_ROOT/mol_compiler/parallel/submit_chunks.sh" "$@" ;;
     env)            exec "$W" "$@" ;;
+    squeeze)        exec awk -f "$LLB_ROOT/common/squeeze_log.awk" ;;
     root)           echo "$LLB_ROOT" ;;
     help|-h|--help) usage ;;
     *) echo "llb: unknown step '$step'" >&2; usage >&2; exit 64 ;;
