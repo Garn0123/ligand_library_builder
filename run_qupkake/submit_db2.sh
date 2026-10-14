@@ -13,9 +13,13 @@
 #   logs/        SLURM logs, per-shard build_ligand logs, env.taskNNN.txt
 #   provenance.<jobid>.txt
 #
-# Options (defaults from the db2_converter notebook, 2026-08-27):
+# Options (defaults from the db2_converter notebook, 2026-08-27, except --mmff):
 #   --method M    conformator      --nconf N   600
-#   --mmff on|off off              --ncpus N   8 builds per array task
+#   --mmff M      restrained       --ncpus N   8 builds per array task
+#                 restrained = eps 4r + 0.3 A heavy-atom restraints (our launcher,
+#                 run_qupkake/build_ligand_relaxed.py); on = db2_converter's plain
+#                 MMFF (folds zwitterions); off = no relaxation (left 1.15 A H-H
+#                 clashes in every conformer of some Owen parents, 2026-10-14)
 #   --nshards N   100              --mem-per-cpu 2G   --time 24:00:00
 #
 # Resubmitting with an existing RUNDIR resumes: shards are NOT re-split (a new
@@ -27,7 +31,7 @@ set -euo pipefail
 
 [[ $# -ge 2 ]] || { sed -n '2,/^$/p' "$0" >&2; exit 64; }
 RUN="$1"; LIB="$2"; shift 2
-METHOD=conformator; NCONF=600; MMFF=off; NCPUS=8; NSHARDS=100
+METHOD=conformator; NCONF=600; MMFF=restrained; NCPUS=8; NSHARDS=100
 MEM_PER_CPU=2G; TIME=24:00:00
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -42,7 +46,8 @@ while [[ $# -gt 0 ]]; do
         *) echo "unknown option $1" >&2; exit 64 ;;
     esac
 done
-[[ "$MMFF" == on || "$MMFF" == off ]] || { echo "--mmff must be on or off" >&2; exit 64; }
+[[ "$MMFF" == on || "$MMFF" == off || "$MMFF" == restrained ]] \
+    || { echo "--mmff must be restrained, on or off" >&2; exit 64; }
 
 LLB_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export LLB_ROOT

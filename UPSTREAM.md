@@ -240,9 +240,18 @@ llb verify-db2 library/library.tsv --outputpath db2_run/out
 ```
 
 Defaults follow the db2_converter notebook (2026-08-27): `-m conformator`,
-`-n 600 --keep_max_conf --checkstereo --reseth --rotateh --dock38`, MMFF off,
-round-robin shards. `--method`, `--nconf`, `--mmff on`, `--ncpus`, `--nshards`,
-`--mem-per-cpu` and `--time` override them. Each array task runs `NCPUS` builds on
+`-n 600 --keep_max_conf --checkstereo --reseth --rotateh --dock38`, round-robin
+shards. One change since: `--mmff restrained` is the default. Conformator left
+some of Owen's molecules unrelaxed (an N-H 1.15 A from a C-H in every
+conformer); db2_converter's own `--MMFFopt` fixes that but folds charged
+molecules in vacuum (N+...O- contacts x3). `restrained` runs build_ligand through
+`run_qupkake/build_ligand_relaxed.py`, which swaps in epsilon = 4r and 0.3 A
+flat-bottom heavy-atom restraints: on 2,735 conformers it cleared 2,008 of 2,011
+clashes and moved heavy atoms 0.27 A. Compare variants on your own conformers
+with `llb mmff-test conformer.NAME.fixed.mol2`. `--mmff on` / `off` give
+db2_converter's plain MMFF / none. `--method`, `--nconf`, `--mmff`, `--ncpus`,
+`--nshards`, `--mem-per-cpu` and `--time` override the defaults. For one molecule
+by hand, `llb build-ligand` runs the same launcher (and accepts a relative `-i`). Each array task runs `NCPUS` builds on
 node-local scratch, rsyncs back every 15 minutes, and refuses to start if
 singularity, build_ligand, RDKit or AMSOL's libraries are missing.
 

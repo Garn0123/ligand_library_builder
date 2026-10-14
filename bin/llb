@@ -34,6 +34,8 @@
 #   llb check-stereo SMI      run_qupkake/check_db2_stereo.py            (DB2C)
 #   llb submit-db2 RUNDIR SMI [opts] [-- sbatch args]                    (run_qupkake/submit_db2.sh)
 #   llb verify-db2 ARGS       run_qupkake/verify_db2_build.py            (DB2C)
+#   llb build-ligand ARGS     db2_converter build_ligand, restrained MMFF  (DB2C)
+#                             (run_qupkake/build_ligand_relaxed.py; one molecule by hand)
 #   llb mol2 ARGS             run_qupkake/db2_to_mol2.py                 (DOCK)
 #   llb clash-report MOL2... [-o TSV]  why db2 sets are flagged broken (no env)
 #   llb mmff-test MOL2|SDF... compare MMFF relaxation variants (collapse vs clashes) (PREP)
@@ -95,6 +97,7 @@ case "$step" in
     check-stereo)   exec "$W" DB2C python "$Q/check_db2_stereo.py" "$@" ;;
     submit-db2)     exec "$Q/submit_db2.sh" "$@" ;;
     verify-db2)     exec "$W" DB2C python "$Q/verify_db2_build.py" "$@" ;;
+    build-ligand)   exec "$W" DB2C python "$Q/build_ligand_relaxed.py" "$@" ;;
     mol2)           exec "$W" DOCK python3 "$Q/db2_to_mol2.py" "$@" ;;
     mol2-library)   exec "$W" PREP python "$Q/mol2_library.py" "$@" ;;
     clash-report)   exec python3 "$Q/clash_report.py" "$@" ;;
