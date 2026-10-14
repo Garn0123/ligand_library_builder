@@ -32,7 +32,6 @@ step would crash on it) and counted in the log.
 """
 from __future__ import annotations
 
-import logging
 import os
 import sys
 from pathlib import Path
@@ -49,7 +48,6 @@ VARIANT = os.environ.get("LLB_MMFF_VARIANT", "eps4r_restrained")
 MAX_DISPL = float(os.environ.get("LLB_MMFF_MAX_DISPL", "0.3"))
 K = float(os.environ.get("LLB_MMFF_K", "100"))
 MAX_ITERS = int(os.environ.get("LLB_MMFF_MAX_ITERS", "200"))
-log = logging.getLogger("llb.mmff")
 
 
 def mmffopt_restrained(inmol2, outmol2):
@@ -66,8 +64,11 @@ def mmffopt_restrained(inmol2, outmol2):
         out.append("".join(update_mol2block_from_mol(block, relaxed)))
     with open(outmol2, "w") as fh:
         fh.write("".join(out))
-    log.warning(">>> llb restrained MMFF (%s, %.2f A, k=%g): %d conformer(s), %d left "
-                "unrelaxed (no MMFF parameters)", VARIANT, MAX_DISPL, K, len(blocks), unrelaxed)
+    # print, not logging: db2_converter configures its own loggers, and a
+    # message on another logger never reached the shard log (2026-10-14)
+    print(f"   INFO: llb restrained MMFF ({VARIANT}, {MAX_DISPL:.2f} A, k={K:g}): "
+          f"{len(blocks)} conformer(s), {unrelaxed} left unrelaxed (no MMFF parameters)",
+          flush=True)
 
 
 pipeline.mmffopt = mmffopt_restrained
