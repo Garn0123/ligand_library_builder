@@ -47,7 +47,7 @@ check() {
 check "singularity not on PATH (module purge without reload?)" "command -v singularity"
 check "build_ligand not executable ($BUILD_LIGAND)"             "[[ -x '$BUILD_LIGAND' ]]"
 check "python cannot import rdkit"                             "python -c 'import rdkit'"
-[[ "${MMFF:-off}" == restrained ]] && check "restrained MMFF launcher does not import" \
+check "build launcher does not import" \
     "python -c 'import sys; sys.path.insert(0, \"$LLB_ROOT/run_qupkake\"); import build_ligand_relaxed'"
 
 AMSOL=$(python -c "from db2_converter.config import config; print(config['all']['AMSOLEXE'])" 2>/dev/null)
@@ -72,12 +72,14 @@ echo "preflight OK"
 # MMFF: off = none; on = db2_converter's own (plain MMFF94, folds charged
 # molecules); restrained = run_qupkake/build_ligand_relaxed.py, which swaps in
 # eps=4r + 0.3 A flat-bottom heavy-atom restraints (measured on Owen's set).
+# Every build goes through the launcher, which also writes one timing row per
+# molecule to out/NNNN/llb_build.tsv (llb timing summarizes them).
 flags=""
-build_cmd=("$BUILD_LIGAND")
+build_cmd=(python "$LLB_ROOT/run_qupkake/build_ligand_relaxed.py")
 case "$MMFF" in
-    on)         flags="--MMFFopt" ;;
-    restrained) flags="--MMFFopt"
-                build_cmd=(python "$LLB_ROOT/run_qupkake/build_ligand_relaxed.py") ;;
+    on)         flags="--MMFFopt"; export LLB_MMFF_VARIANT=db2_converter ;;
+    restrained) flags="--MMFFopt" ;;
+    off)        export LLB_MMFF_VARIANT=db2_converter ;;
 esac
 
 # --- provenance --------------------------------------------------------

@@ -201,7 +201,9 @@ def run_part(args, manifest, settings_sha) -> int:
         if sha256_file(shard) != r["sha256"]:
             raise SystemExit(f"{shard} does not match its manifest sha256")
         rows = [tuple(l.split()[:2]) for l in shard.read_text().splitlines() if l.strip()]
+        t_shard = time.time()
         decisions, site_rows, protomers = triage_shard(rows, model, args)
+        elapsed = time.time() - t_shard
 
         out.mkdir(parents=True, exist_ok=True)
         write_tsv(out / "decisions.tsv", DECISION_COLUMNS, decisions)
@@ -216,7 +218,8 @@ def run_part(args, manifest, settings_sha) -> int:
             f"shard_index={idx}\nshard_sha256={r['sha256']}\n"
             f"settings_sha256={settings_sha}\n"
             + "".join(f"{f}={h}\n" for f, h in sorted(model.weights_sha.items()))
-            + f"molgpka_dir={model.root}\nfinished={time.strftime('%Y-%m-%dT%H:%M:%S')}\n")
+            + f"molgpka_dir={model.root}\nparents={len(rows)}\nelapsed_s={elapsed:.3f}\n"
+            + f"host={os.uname().nodename}\nfinished={time.strftime('%Y-%m-%dT%H:%M:%S')}\n")
         done_here += 1
         mols += len(rows)
     dt = time.time() - t0

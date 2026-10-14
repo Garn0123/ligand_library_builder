@@ -110,6 +110,7 @@ if [[ "${SLURM_CPUS_PER_TASK:-1}" -gt 1 ]]; then
 fi
 
 echo "shard $IDX  $(wc -l < "$shard") parents  host $(hostname)  $(date -Is)"
+t_start=$(date +%s)
 rm -rf "$out"
 mkdir -p "$out"
 # shellcheck disable=SC2086  # PH is a deliberate word list
@@ -126,6 +127,11 @@ python "$SCRIPT" "$shard" -o "$out" \
     echo "max_states=$MAX_STATES"
     echo "qupkake_exe=$QK_EXE"; echo "xtbpath=${XTBPATH:-bundled}"
     echo "config=$LLB_CONFIG"
+    echo "parents=$(grep -c . "$shard")"
+    echo "started_epoch=$t_start"
+    echo "elapsed_s=$(( $(date +%s) - t_start ))"
+    echo "host=$(hostname)"
+    echo "cpus=${SLURM_CPUS_PER_TASK:-1}"
     echo "finished=$(date -Is)"
 } > "$out/DONE"
 echo "done: $out"

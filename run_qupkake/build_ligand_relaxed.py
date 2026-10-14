@@ -23,7 +23,8 @@ function before build_ligand.main() runs changes only the relaxation. Nothing
 in the db2_converter checkout is modified.
 
 Settings (environment; defaults are what was measured):
-    LLB_MMFF_VARIANT     eps4r_restrained   (any mmff_variants.py variant)
+    LLB_MMFF_VARIANT     eps4r_restrained   (any mmff_variants.py variant, or
+                                            db2_converter = leave its step alone)
     LLB_MMFF_MAX_DISPL   0.3                A, free movement per heavy atom
     LLB_MMFF_K           100                kcal/mol/A^2 beyond it
     LLB_MMFF_MAX_ITERS   200                same as db2_converter's
@@ -71,7 +72,57 @@ def mmffopt_restrained(inmol2, outmol2):
           flush=True)
 
 
-pipeline.mmffopt = mmffopt_restrained
+# "db2_converter" keeps db2_converter's own step (--mmff on, or no --MMFFopt at
+# all); anything else is an mmff_variants.py variant swapped in for it.
+if VARIANT != "db2_converter":
+    pipeline.mmffopt = mmffopt_restrained
+
+
+# --- per-molecule record --------------------------------------------------------
+# build_ligand prints its per-molecule summary (time, conformers, db2 parts,
+# failure) once, at the END of a shard; a killed shard loses all of it. This
+# appends one row per molecule to OUTPUTPATH/llb_build.tsv as each finishes.
+# llb timing summarizes them.
+BUILD_COLUMNS = ["name", "started", "elapsed_s", "method", "mmff", "n_in", "n_out",
+                 "n_out_roth", "n_ring", "n_db2_part", "db2_bytes", "failed", "host", "smiles"]
+
+
+def timed(db2_converter_fn):
+    import socket
+    import time as _time
+
+    def run(line, params, *a, **kw):
+        t0 = _time.time()
+        started = _time.strftime("%Y-%m-%dT%H:%M:%S")
+        result, failed = None, ""
+        try:
+            result = db2_converter_fn(line=line, params=params, *a, **kw)
+            return result
+        except Exception as e:                      # recorded, then re-raised
+            failed = f"EXCEPTION:{type(e).__name__}"
+            raise
+        finally:
+            elapsed = _time.time() - t0
+            lsp = line.split()
+            name = lsp[1] if len(lsp) > 1 else "?"
+            out = Path(params["outputpath"])
+            if result is not None:
+                faillist, n_in, n_out, n_roth, n_ring, n_part = result
+                failed = "_".join(f[-1] for f in faillist if f) or failed
+            else:
+                n_in = n_out = n_roth = n_ring = n_part = "NA"
+            db2 = out / f"{name}.db2.gz"
+            row = [name, started, f"{elapsed:.3f}", params.get("samplopt", ""),
+                   (VARIANT if params.get("MMFFopt") else "off"), n_in, n_out, n_roth,
+                   n_ring, n_part, db2.stat().st_size if db2.exists() else 0, failed or "-",
+                   socket.gethostname(), lsp[0] if lsp else ""]
+            path = out / "llb_build.tsv"
+            new = not path.exists()
+            with open(path, "a") as fh:
+                if new:
+                    fh.write("\t".join(BUILD_COLUMNS) + "\n")
+                fh.write("\t".join(map(str, row)) + "\n")
+    return run
 
 
 def absolute_input(argv: list[str]) -> list[str]:
@@ -85,6 +136,9 @@ def absolute_input(argv: list[str]) -> list[str]:
 
 
 if __name__ == "__main__":
-    from db2_converter.build_ligand import main
+    import db2_converter.build_ligand as bl
+    # main() builds partial(db2_converter, ...) from this module global at run
+    # time, so wrapping it here times every molecule
+    bl.db2_converter = timed(bl.db2_converter)
     sys.argv = absolute_input(sys.argv)
-    sys.exit(main())
+    sys.exit(bl.main())
