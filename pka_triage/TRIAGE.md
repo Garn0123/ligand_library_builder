@@ -51,7 +51,9 @@ Sources for the amide numbers (checked 2026-10-08):
 | -0.62 +/- 0.07, -0.42, -0.28 | protonated acetamide, N-methylacetamide, N,N-dimethylacetamide | water, 298 K | Grant, McTigue & Ward, *Aust. J. Chem.* 1983, 36, 2211-2218, doi:10.1071/CH9832211 |
 
 The amine rows back `amine_nh_acid` (site filter v2, 2026-10-08): Owen's set
-produced [NH-]/[N-] amine-anion protomers, three of which failed db2_converter.
+produced [NH-]/[N-] amine-anion protomers. (The three that then failed
+db2_converter with `1generate` belong to a parent that fails the same way with
+sensible protomers too, so that failure is the scaffold's, not the filter's.)
 
 What these support: no listed value puts an ordinary amide, anilide, urea or
 carbamate N-H anywhere near 2-7 in water. The one water value is 15.1

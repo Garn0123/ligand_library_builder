@@ -97,8 +97,10 @@ DEFAULT_STEREO_CAP = 32
 #                 enamine) as an ACID, i.e. an [N-]/[NH-] anion. NH3 is 38 in
 #                 water (extrapolated; Ripin & Evans) and 41 in DMSO; DMSO:
 #                 pyrrolidine 44, aniline 30.6, diphenylamine 25.0 (Reich).
-#                 Seen on Owen's set (2026-10-08): [NH-] and [N-] protomers,
-#                 three of which then failed db2_converter (1generate).
+#                 Seen on Owen's set (2026-10-08): [NH-] and [N-] protomers.
+#                 (The parent whose [N-] protomers failed db2_converter
+#                 with 1generate failed again without them: its scaffold,
+#                 not its protonation, defeats conformer generation.)
 #                 N bonded to anything but C/H, or to C=N/O/S, is left alone.
 #  amide_n_base   any N on C=O/C=S or S(=O)=O as a BASE. Amides protonate on
 #                 O, not N, and even that is pKa -0.62 (acetamide, water);

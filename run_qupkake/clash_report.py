@@ -4,6 +4,11 @@ clash_report.py -- why are a molecule's db2 conformer sets flagged broken?
 
     llb env DOCK sh -c '"${DB2TOOL_EXE:-db2tool}" tomol2 --all --keep-broken -o sets.mol2 db2_run/out/0003/NAME.db2.gz'
     llb clash-report sets.mol2 -o clash.tsv
+    llb clash-report db2_run/out/0003/conformer.NAME.fixed.mol2 -o before_db2.tsv
+
+The second form reads db2_converter's own conformer file from before mol2db2
+(no hydrogen rotation, no set assembly): if a contact is already there, it came
+from conformer generation / fixmol2, not from the db2 step.
 
 db2_converter (63d6656, mol2db2/clash.py) flags a conformer set broken by one
 rule: a ROTATABLE hydrogen within 1.70 A of another hydrogen more than two
@@ -100,7 +105,18 @@ def closest_contact(atoms, bonds):
         return None
     d, i, j = best
     group = lambda h: f"{element(atoms[heavy_of[h]][4])}-H"   # noqa: E731
-    return d, group(i), group(j), atoms[i][0], atoms[j][0]
+    # shortest bond path between the two H, and the atoms they hang off
+    dist = {i: 0}
+    q = deque([i])
+    while q and j not in dist:
+        u = q.popleft()
+        for v in nbr[u]:
+            if v not in dist:
+                dist[v] = dist[u] + 1
+                q.append(v)
+    label = lambda h: (f"{atoms[heavy_of[h]][0]}({atoms[heavy_of[h]][4]})#{heavy_of[h] + 1}"  # noqa: E731
+                       f"-{atoms[h][0]}#{h + 1}")
+    return d, group(i), group(j), label(i), label(j), dist.get(j, -1)
 
 
 def main(argv=None) -> int:
@@ -112,22 +128,24 @@ def main(argv=None) -> int:
 
     per_mol = defaultdict(list)
     with open(args.output, "w") as out:
-        out.write("name\tconf\tbroken\tclosest_HH\trotatable_H_on\tother_H_on\tatoms\n")
+        out.write("name\tconf\tbroken\tclosest_HH\trotatable_H_on\tother_H_on\t"
+                  "rotatable_H\tother_H\tbonds_apart\n")
         for path in args.mol2:
             for h, atoms, bonds in records(path):
                 name = h.get("Name", "?")
                 c = closest_contact(atoms, bonds)
                 broken = h.get("HDB_Set_Broken", "") == "yes"
                 if c is None:
-                    out.write(f"{name}\t{h.get('HDB_Conf_Number','')}\t{int(broken)}\t\t\t\t\n")
+                    out.write(f"{name}\t{h.get('HDB_Conf_Number','')}\t{int(broken)}\t\t\t\t\t\t\n")
                     per_mol[name].append((None, broken, ""))
                     continue
-                d, gi, gj, ai, aj = c
+                d, gi, gj, ai, aj, nb = c
                 out.write(f"{name}\t{h.get('HDB_Conf_Number','')}\t{int(broken)}\t{d:.3f}"
-                          f"\t{gi}\t{gj}\t{ai}-{aj}\n")
-                per_mol[name].append((d, broken, f"{gi}...{gj}"))
+                          f"\t{gi}\t{gj}\t{ai}\t{aj}\t{nb}\n")
+                per_mol[name].append((d, broken, f"{ai}...{aj} ({nb} bonds)"))
 
-    print(f"{'name':<18} {'sets':>5} {'broken':>6} {'<1.70':>6} {'min':>6} {'median':>7}  closest pair (most common)")
+    print(f"{'name':<18} {'sets':>5} {'broken':>6} {'<1.70':>6} {'min':>6} {'median':>7}  "
+          f"closest pair under 1.70 (most common): heavy(type)#n-H#n")
     for name, rows in sorted(per_mol.items()):
         ds = [d for d, _, _ in rows if d is not None]
         pairs = defaultdict(int)
