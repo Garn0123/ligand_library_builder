@@ -141,6 +141,17 @@ IMPLAUSIBLE_SITES = {
     # to the =N when the predictor gave the =N none (filter_sites).
     ("basic", "amidine_amino_n_base"): Chem.MolFromSmarts(
         "[#7;!a;$([#7]-[#6;!a]=[#7;!a])]"),
+    # Sulfur as a base (thioether, thiophene, thiocarbonyl, sulfone S): built
+    # a sulfonium [SH+] on the drug-like 10k. Protonated ethers are already
+    # -2 to -3.8 (THF -2.05, Me2O -3.8; Ripin & Evans table p1) and sulfides are
+    # weaker bases still -- chemistry, not a checked number for sulfur.
+    ("basic", "sulfur_base"): Chem.MolFromSmarts("[#16]"),
+    # Any atom of an azide or diazo group as a base: built R-N=[N+]=NH, an
+    # azide protonated on its terminal N, in every protomer of 38 names (which
+    # then crash RDKit's stereo enumeration). Not protonated at pH 6-8 --
+    # chemistry, not a checked number.
+    ("basic", "azide_base"): Chem.MolFromSmarts(
+        "[#7,#6;$(*=[#7+]=[#7-]),$(*~[#7+]~[#7-]),$([#7+](~*)~[#7-]),$([#7-]~[#7+])]"),
     ("acidic", "carbon_acid"): Chem.MolFromSmarts(
         "[#6;!$([#6X4]-[#7+](=O)[#8-]);!$([#6X4]-[#7](=O)=O);"
         "!$([#6X4](-[CX3;$(C=O);!$(C(=O)-[#7,#8,#16])])-[CX3;$(C=O);!$(C(=O)-[#7,#8,#16])])]"),
@@ -149,10 +160,11 @@ IMPLAUSIBLE_SITES = {
 
 # Bumped whenever IMPLAUSIBLE_SITES changes, and written into every output
 # that depends on it, so runs filtered by different rules are never mixed.
-SITE_FILTER_VERSION = 5          # 1: amide rules (2026-10-08); 2: + amine_nh_acid;
+SITE_FILTER_VERSION = 6          # 1: amide rules (2026-10-08); 2: + amine_nh_acid;
                                  # 3: + oxygen_base, alcohol_oh_acid (2026-10-14)
                                  # 4: + carbon_acid (2026-10-15)
                                  # 5: + amidine_amino_n_base (2026-10-16)
+                                 # 6: + sulfur_base, azide_base (2026-10-16)
 
 
 def implausible_sites(mol: Chem.Mol) -> dict[tuple[int, str], str]:

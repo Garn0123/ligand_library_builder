@@ -48,6 +48,12 @@ Also filtered, in BOTH paths (`qupkake_protomers.IMPLAUSIBLE_SITES`,
   protonation is never lost; triage `sites.tsv` marks it
   `moved_from_amidine_amino_n`. Aromatic C is not matched (2-aminopyridine:
   the ring N is the base);
+- sulfur as a base, and any atom of an azide or diazo group as a base
+  (`sulfur_base`, `azide_base`, site filter v6): the drug-like v2 run built a
+  sulfonium `[SH+]` and azides protonated on the terminal N (`N=[N+]=N`, which
+  also crash RDKit's stereo enumeration). Chemistry, not checked numbers:
+  protonated ethers are already -2 to -3.8 (Ripin & Evans) and sulfides are
+  weaker bases;
 - carbon as an acid (`carbon_acid`, site filter v4), except a CH between two
   ketone/aldehyde carbonyls or a CH carrying a nitro group. MolGpKa put
   malonic acid's CH2 at 7.5 and built a [CH-] trianion.
