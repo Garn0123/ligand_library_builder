@@ -24,11 +24,29 @@ Exit 1: lists the lines db2_converter would rename. Do not build.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import re
 import sys
+from pathlib import Path
 
 CONTRACT = re.compile(r"^C[0-9A-Za-z]{14}C$")
+
+
+@contextlib.contextmanager
+def quiet_stderr():
+    """Silence C++ stderr (RDKit prints a full stack trace for every invariant
+    violation, which buried the summary on the 22k-name drug-like library)."""
+    sys.stderr.flush()
+    saved = os.dup(2)
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull, 2)
+        yield
+    finally:
+        os.dup2(saved, 2)
+        os.close(devnull)
+        os.close(saved)
 
 
 def main(argv=None) -> int:
@@ -59,7 +77,8 @@ def main(argv=None) -> int:
         if not CONTRACT.match(name):
             badname.append(name)
         try:
-            isomers = rdk_enumerate_smi(smi)
+            with quiet_stderr():
+                isomers = rdk_enumerate_smi(smi)
         except Exception as e:  # noqa: BLE001
             # RDKit 2024.03.5 EnumerateStereoisomers can raise "Range Error idx2"
             # on a double bond with no controlling atom on one end. The build
@@ -93,8 +112,13 @@ def main(argv=None) -> int:
         for name, a, b in unstable[:5]:
             print(f"           {name}  {a}\n                             -> {b}")
     if crashed:
+        out = Path(args.smi).with_name(Path(args.smi).stem + ".stereo_crashed.tsv")
+        with open(out, "w") as fh:
+            fh.write("name\tsmiles\terror\n")
+            fh.writelines(f"{a}\t{b}\t{c}\n" for a, b, c in crashed)
         print(f"  [warn] {len(crashed):,} SMILES crash RDKit's stereo enumeration; "
-              f"build_ligand will skip them (logged 'cannot be parsed', no db2):")
+              f"build_ligand will skip them (logged 'cannot be parsed', no db2). "
+              f"All in {out}; first 10:")
         for name, smi, err in crashed[:10]:
             print(f"           {name}  {smi}  ({err})")
     if badname or split:
