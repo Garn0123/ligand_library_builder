@@ -379,6 +379,32 @@ class QupKakeProgress:
         return False
 
 
+def qupkake_can_embed(smi: str, tries: int = 3) -> bool:
+    """Would QupKake's own input step get through this molecule?
+
+    `qupkake file x.csv` first embeds every row (cli.embed_molecule: AddHs,
+    EmbedMolecule, MMFFOptimizeMolecule, nothing checked). A molecule that does
+    not embed makes MMFFOptimizeMolecule raise "Bad Conformer Id", and QupKake
+    exits before processing ANY molecule in the file: on the drug-like 10k,
+    189 of 1,000 ten-molecule shards died this way. Same calls here, in the same
+    environment; QupKake's embed is unseeded, so a molecule must embed under
+    every one of `tries` seeds to be sent.
+    """
+    from rdkit.Chem import AllChem
+    mol = Chem.MolFromSmiles(smi)
+    if mol is None:
+        return False
+    mol = Chem.AddHs(mol)
+    try:
+        for seed in range(tries):
+            if AllChem.EmbedMolecule(mol, randomSeed=0xC0FFEE + seed) == -1:
+                return False
+        AllChem.MMFFOptimizeMolecule(mol)
+    except Exception:                    # noqa: BLE001 -- anything QupKake would die on
+        return False
+    return True
+
+
 def run_qupkake(csv_path: Path, root: Path, output: str, tautomerize: bool,
                 nproc: int | None, exe: str = "qupkake",
                 n_mols: int = 0, progress_interval: float = 60) -> Path:
@@ -410,6 +436,8 @@ def run_qupkake(csv_path: Path, root: Path, output: str, tautomerize: bool,
 
 def parse_qupkake_sdf(path: Path) -> dict[str, tuple[Chem.Mol, list[Site]]]:
     """Group the per-site SDF records by molecule name."""
+    if path.stat().st_size == 0:          # nothing was sent to QupKake (RDKit refuses empty files)
+        return {}
     supplier = Chem.SDMolSupplier(str(path), removeHs=False, sanitize=True)
     grouped: dict[str, tuple[Chem.Mol, list[Site]]] = {}
     bad = 0
@@ -1075,6 +1103,7 @@ def main(argv=None):
                 fh.write(f"{smi} {name}\n")
 
     # ---- 2. QupKake -------------------------------------------------------
+    unembeddable: list[str] = []
     if args.from_sdf:
         sdf_path = Path(args.from_sdf)
         print(f"[2/5] reusing {sdf_path}")
@@ -1086,15 +1115,29 @@ def main(argv=None):
                   f"for {args.nproc} cores. -mp 1 and more processes is faster.",
                   file=sys.stderr)
         work.mkdir(parents=True, exist_ok=True)
+        unembeddable = [n for smi, n in inputs if not qupkake_can_embed(smi)]
+        to_run = [(smi, n) for smi, n in inputs if n not in set(unembeddable)]
+        if unembeddable:
+            print(f"  ! {len(unembeddable)} molecule(s) do not embed the way QupKake's "
+                  f"input step does; left out so the rest of the file runs "
+                  f"(qupkake_failed.tsv, reason qupkake_embed_failed): "
+                  f"{', '.join(unembeddable[:5])}", file=sys.stderr)
         csv_path = work / "qupkake_input.csv"
         with open(csv_path, "w", newline="") as fh:
             w = csv.writer(fh, lineterminator="\n")
             w.writerow(["smiles", "name"])
-            w.writerows([[s, n] for s, n in inputs])
-        sdf_path = run_qupkake(csv_path, work, "qupkake_output.sdf",
-                               args.tautomerize, args.nproc, args.qupkake_exe,
-                               n_mols=len(inputs),
-                               progress_interval=args.progress_interval)
+            w.writerows([[s, n] for s, n in to_run])
+        if to_run:
+            sdf_path = run_qupkake(csv_path, work, "qupkake_output.sdf",
+                                   args.tautomerize, args.nproc, args.qupkake_exe,
+                                   n_mols=len(to_run),
+                                   progress_interval=args.progress_interval)
+        else:
+            # nothing for QupKake: an empty tree the audit reads as all failed
+            for sub in ("output", "processed", "raw"):
+                (work / sub).mkdir(exist_ok=True)
+            sdf_path = work / "output" / "qupkake_output.sdf"
+            sdf_path.write_text("")
 
     grouped = parse_qupkake_sdf(sdf_path)
     n_records = sum(len(s) for _, s in grouped.values())
@@ -1123,7 +1166,9 @@ def main(argv=None):
         print("  ! no QupKake working tree next to the SDF: cannot tell a crashed "
               "molecule from one with no sites, so both pass through as "
               "no_sites_predicted", file=sys.stderr)
-    elif qk_failed:
+    for n in unembeddable:
+        qk_failed[n] = "qupkake_embed_failed"
+    if qk_failed:
         print(f"  ! QupKake failed on {len(qk_failed)} molecule(s) "
               f"({Counter(qk_failed.values())}); excluded, see qupkake_failed.tsv. "
               f"Details in {sdf_path.parent.parent / 'logs'}", file=sys.stderr)
