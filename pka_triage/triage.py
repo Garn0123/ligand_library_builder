@@ -147,7 +147,10 @@ def triage_shard(rows: list[tuple[str, str]], model: MolGpKa, args):
                 pid, isomers, ref, sites, args.ph, args.margin, args.min_population,
                 args.max_states, args.max_ambiguous, "carry",
                 fallback_note="built_on_molgpka_parent")
-            gap, near_site = min((abs(s.pka - ph), s) for s in sites for ph in args.ph)
+            # key=: on a tied gap (pKa midway between two target pHs, or symmetric
+            # sites) a tuple min would go on to compare Site objects and raise
+            gap, near_site = min(((abs(s.pka - ph), s) for s in sites for ph in args.ph),
+                                 key=lambda t: t[0])
             nearest = f"{near_site.kind[0]}{near_site.idx}:{near_site.pka:.2f}"
             pairs = coupled_pairs(sites, Chem.GetDistanceMatrix(ref), args.ph,
                                   args.coupling_bonds)
