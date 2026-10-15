@@ -65,7 +65,8 @@ from rdkit import Chem  # noqa: E402
 
 from molgpka import MolGpKa  # noqa: E402
 from prepare_parents import write_shards  # noqa: E402
-from qupkake_protomers import (PROTOMER_COLUMNS, SITE_FILTER_VERSION,  # noqa: E402
+from qupkake_protomers import (COUPLING_VERSION, PROTOMER_COLUMNS,  # noqa: E402
+                               SITE_FILTER_VERSION,
                                Site, build_protomers, implausible_sites, make_name,
                                protomer_row, unchanged_protomers)
 
@@ -95,7 +96,8 @@ def settings_of(args) -> dict:
             "keep_amide_sites": args.keep_amide_sites,
             "site_filter_version": "off" if args.keep_amide_sites else SITE_FILTER_VERSION,
             "min_population": args.min_population, "max_states": args.max_states,
-            "max_ambiguous": args.max_ambiguous}
+            "max_ambiguous": args.max_ambiguous,
+            "coupling": COUPLING_VERSION if args.coupling == "on" else "off"}
 
 
 def coupled_pairs(sites: list[Site], dist, ph_values, max_bonds: int) -> list[str]:
@@ -146,7 +148,8 @@ def triage_shard(rows: list[tuple[str, str]], model: MolGpKa, args):
             emitted, _, _, used_isomer = build_protomers(
                 pid, isomers, ref, sites, args.ph, args.margin, args.min_population,
                 args.max_states, args.max_ambiguous, "carry",
-                fallback_note="built_on_molgpka_parent")
+                fallback_note="built_on_molgpka_parent",
+                coupling=args.coupling == "on")
             # key=: on a tied gap (pKa midway between two target pHs, or symmetric
             # sites) a tuple min would go on to compare Site objects and raise
             gap, near_site = min(((abs(s.pka - ph), s) for s in sites for ph in args.ph),
@@ -330,6 +333,9 @@ def main(argv=None) -> int:
     ap.add_argument("--min-population", type=float, default=0.01)
     ap.add_argument("--max-states", type=int, default=8)
     ap.add_argument("--max-ambiguous", type=int, default=6)
+    ap.add_argument("--coupling", choices=["on", "off"], default="on",
+                    help="same-kind charge penalty when building states "
+                         "(qupkake_protomers.Coupling); must match the QupKake half")
     ap.add_argument("--part", default=None, metavar="K/N",
                     help="only parent shards with index %% N == K; then --finish")
     ap.add_argument("--finish", action="store_true",

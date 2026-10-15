@@ -45,7 +45,8 @@ sys.path.insert(0, str(HERE.parent / "run_qupkake"))
 from rdkit import Chem, RDLogger  # noqa: E402
 from rdkit.Chem.MolStandardize import rdMolStandardize  # noqa: E402
 
-from qupkake_protomers import Site, implausible_sites, parse_qupkake_sdf  # noqa: E402
+from qupkake_protomers import (Coupling, Site, dominant_sites,  # noqa: E402
+                               implausible_sites, parse_qupkake_sdf)
 
 RDLogger.DisableLog("rdApp.*")
 
@@ -102,8 +103,9 @@ def mapping(src: Chem.Mol, parent: Chem.Mol) -> dict[int, int] | None:
     return {s: p for p, s in enumerate(m)}
 
 
-def dominant(sites: list[Site], ph: float) -> frozenset:
-    return frozenset((s.idx, s.kind) for s in sites if s.changed_fraction(ph) >= 0.5)
+def dominant(sites: list[Site], ph: float, coupling: Coupling | None = None) -> frozenset:
+    """Most populated microstate, under the same coupling model the states were built with."""
+    return frozenset((s.idx, s.kind) for s in dominant_sites(sites, ph, coupling))
 
 
 def charge(state: frozenset) -> int:
@@ -243,8 +245,9 @@ def main(argv=None) -> int:
                "min_gap": "" if gap[pid] == math.inf else f"{gap[pid]:.2f}",
                "coupled": int(bool(decisions[pid]["coupled_pairs"]))}
         agree_all = True
+        cp = Coupling(parent_mol[pid]) if settings.get("coupling", "off") != "off" else None
         for ph in phs:
-            dm, dq = dominant(ms, ph), dominant(qs, ph)
+            dm, dq = dominant(ms, ph, cp), dominant(qs, ph, cp)
             same = dm == dq
             agree_all &= same
             row[f"agree_{ph:g}"] = int(same)
@@ -253,7 +256,7 @@ def main(argv=None) -> int:
         mid = sorted(phs)[len(phs) // 2]
         row[f"qupkake_amide_anion_{mid:g}"] = int(any(
             k == "acidic" and site_class(parent_mol[pid], a) == "amide / imide NH"
-            for a, k in dominant(qk_raw.get(pid, qs), mid)))
+            for a, k in dominant(qk_raw.get(pid, qs), mid, cp)))
         parent_rows.append(row)
     with open(args.outdir / "parents.tsv", "w", newline="") as fh:
         w = csv.DictWriter(fh, lineterminator="\n", delimiter="\t", fieldnames=list(parent_rows[0]) if parent_rows
@@ -288,6 +291,7 @@ def main(argv=None) -> int:
                                      for ph in phs} if n else {},
         "parents_where_qupkake_deprotonates_an_amide_nh": sum(
             v for r in parent_rows for k, v in r.items() if k.startswith("qupkake_amide_anion_")),
+        "coupling": settings.get("coupling", "off"),
         "agree_at_every_ph": round(sum(r["agree_all"] for r in parent_rows) / n, 3) if n else None,
         "triage_as_run": {
             "route_window": settings["route_window"],
@@ -309,7 +313,8 @@ def main(argv=None) -> int:
             print(f"  {c:<24} {s['n']:>5} {s['mae']:>6.2f} {s['mean_signed']:>+6.2f}")
     print("dominant microstate agrees with QupKake: " + ", ".join(
         f"pH {k} {v:.0%}" for k, v in summary["dominant_state_agreement"].items())
-        + f"; all pH {summary['agree_at_every_ph']:.0%}")
+        + f"; all pH {summary['agree_at_every_ph']:.0%}"
+        + f"  (coupling {settings.get('coupling', 'off')}, as the triage was run)")
     print(f"parents whose QupKake state at mid pH has an amide/imide NH deprotonated: "
           f"{summary['parents_where_qupkake_deprotonates_an_amide_nh']}  (see sites.tsv 'context')")
     t = summary["triage_as_run"]

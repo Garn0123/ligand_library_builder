@@ -24,10 +24,11 @@ on a routed parent; `--on-qupkake-fail drop` drops those parents instead.
 
 Settings: `--ph` (6.4 7.4 8.4), `--route-window` (1.5), `--margin` (1.0, same
 as the QupKake path), `--coupling-bonds` (3), `--coupled route|ignore`,
-`--min-population`, `--max-states`, `--max-ambiguous`. They are recorded in
+`--min-population`, `--max-states`, `--max-ambiguous`, `--coupling on|off`
+(on; see below). They are recorded in
 `triage/settings.json`; a second run with different settings into the same
 `-o` is refused. Merge refuses QupKake shards run with a different pH list,
-margin, min population or max states.
+margin, min population, max states, site filter or coupling.
 
 Also filtered, in BOTH paths (`qupkake_protomers.IMPLAUSIBLE_SITES`,
 `--keep-amide-sites` turns it off):
@@ -118,19 +119,45 @@ harness.
 
 ## Things that assume QupKake, or are wrong for both tools
 
-1. **Neither tool, as we run it, models site-site coupling.** QupKake predicts
-   every site on the input molecule; each site's conjugate is built from that one
-   state. Our state model then multiplies independent per-site fractions. MolGpKa
-   is the same. So routing rule (b), "coupled sites -> QupKake", does not buy
-   coupling. Measured example: piperazine, MolGpKa **10.46 on both N**, so the
-   state model locks the **dication** at every target pH. Experimentally the
-   second pKa is about 5.6, so the monocation dominates at 7.4. Any fix is new
-   work in either path:
-   - sequential re-prediction on the singly-protonated state. Cheap with
-     MolGpKa, but upstream un-charges its input and was trained on neutral
-     molecules, so whether it can predict on a cation is an open question;
-   - or a rule-based penalty for sites within N bonds.
-   The harness should report coupled pairs separately so we see the damage.
+1. **Neither predictor models site-site coupling; the state model now does
+   (`--coupling on`, the default since 2026-10-15).** QupKake and MolGpKa each
+   predict every site with the others neutral, so the independent
+   Henderson-Hasselbalch product charges every amine whose pKa clears the pH.
+   On the drug-like 10k (before the embed fix), about 95 of the 165
+   settled-but-disagree parents were MolGpKa +1 against QupKake +2 to +5, at
+   every pH. MolGpKa's own piperazine
+   (10.46 on both N) locked the dication the same way; experimentally the
+   second pKa is 5.68 and the monocation dominates at 7.4.
+
+   The fix (`qupkake_protomers.Coupling`) scores every combination of sites
+   with a penalty for each two same-kind sites charged together, by bonds
+   apart: micro-pKa shifts from symmetric diamines and diacids, (pKa1 - pKa2)
+   - log10(4), all from the Williams compilation (ACS Organic Division, rev.
+   4/7/2022; values and pages in the code comment):
+
+   | bonds apart | bases | acids | from |
+   |---|---|---|---|
+   | <= 3, same ring | 3.5 | 3.5 | piperazine 9.82/5.68, DABCO 8.19/4.18 |
+   | <= 3 | 2.2 | 2.4 | ethylenediamine 9.98/7.52, 1,2-diaminopropane, 2,3-diaminobutane; oxalic 1.23/4.19 |
+   | 4 | 1.1 | 2.3 | 1,3-diaminopropanes 1.4 and 0.85; malonic 2.83/5.69 |
+   | 5 | 0.9 | 0.7 | putrescine 10.84/9.31; succinic 4.19/5.48 |
+   | 6 | 0.7 | 0.5 | cadaverine 11.05/9.74; glutaric 4.34/5.42 |
+   | 7 | 0.4 | 0.4 | adipic 4.42/5.41 (bases borrow it) |
+   | 8-10 | 0.3 | 0.3 | extrapolated |
+
+   Checked against the same tables: ethylenediamine at pH 7.4 is 37% dication
+   in the model, 43% from its pKas; piperazine at 6.4 is 17% against 16%.
+   Limits: opposite charges are not coupled (the correction only removes
+   charge); conjugated paths (pyrazine, pyrimidine, amidines) couple more
+   strongly than these aliphatic references, so they are under-corrected; the
+   predicted pKas themselves are unchanged (MolGpKa's 10.46 for piperazine
+   still makes the dication 65% at 6.4). `--coupling off` restores the
+   independent product exactly. Merge refuses halves built with different
+   coupling; `llb reenumerate` rebuilds QupKake shards without xtb.
+
+   States are also merged by SMILES now: in a symmetric molecule protonating
+   either N is one species, and was written twice before (both modes).
+
 2. **Two thresholds, not one.** `--margin` (default 1.0) decides which sites are
    enumerated both ways. The proposed 1.5 decides which *molecules* go to
    QupKake. Keep them as separate config values.

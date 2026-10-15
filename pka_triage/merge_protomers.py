@@ -128,6 +128,16 @@ def load_qupkake(args, routed_ids: set[str], settings: dict):
                              f"  llb reenumerate {rdir} {args.qupkake} NEW_DIR\n"
                              f"and pass --qupkake NEW_DIR (a triage made before the "
                              f"change needs re-running too, into a new -o)")
+        # ... and the same site-coupling model (absent = built before it existed)
+        want_c = str(settings.get("coupling", "off"))
+        have_c = (read_done(d / "site_filter.txt").get("coupling", "off")
+                  if (d / "site_filter.txt").exists() else "off")
+        if have_c != want_c:
+            raise SystemExit(f"{d} was enumerated with coupling={have_c}, the triage with "
+                             f"coupling={want_c}. Rebuild it from its SDFs (no xtb):\n"
+                             f"  llb reenumerate {rdir} {args.qupkake} NEW_DIR\n"
+                             f"or rerun the triage into a new -o with the matching "
+                             f"--coupling")
         prov.append(f"qupkake_shard_{int(r['index']):05d}={r['sha256']}")
         with open(d / "protomers.csv") as fh:
             for row in csv.DictReader(fh):

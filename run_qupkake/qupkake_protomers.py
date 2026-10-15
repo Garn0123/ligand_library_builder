@@ -610,9 +610,151 @@ def apply_changes(ref: Chem.Mol, changes: Iterable[tuple[int, int]],
     return Chem.MolToSmiles(round_trip)
 
 
+# --------------------------------------------------------------------------
+# site coupling
+# --------------------------------------------------------------------------
+# QupKake and MolGpKa each predict a site's pKa with every other site neutral.
+# Charging one amine makes the next one harder to charge, and the independent
+# Henderson-Hasselbalch product ignores that: on the drug-like 10k, QupKake's
+# states reached +4/+5 on 20-heavy-atom molecules where MolGpKa (one charge)
+# disagreed. --coupling on scores every combination of sites with a pairwise
+# penalty for each two same-kind sites both charged:
+#
+#   log10 weight(state) = sum over charged sites of (pKa - pH) [base] or
+#                         (pH - pKa) [acid]  -  sum over same-kind charged
+#                         pairs of SHIFT(bonds apart, same ring)
+#
+# SHIFT is the micro-pKa shift of the second site, from symmetric diamines and
+# diacids: (pKa1 - pKa2) - log10(4), the log10(4) being the statistical part of
+# the gap for two equivalent sites. Water, 25 C, from R. Williams, "pKa Data
+# Compiled by R. Williams" (ACS Organic Division, updated 4/7/2022):
+#   bases  ethylenediamine 9.98/7.52 (3 bonds) -> 1.9; 1,2-diaminopropane
+#          10.00/7.13 -> 2.3; 2,3-diaminobutane 10.00/6.91 -> 2.5   (p15, p20)
+#          1,3-diamino-2,2-dimethylpropane 10.22/8.18 (4) -> 1.4;
+#          1,3-diaminopropan-2-ol 9.68/8.23 (4) -> 0.85              (p20)
+#          H2N(CH2)4NH2 10.84/9.31 (5) -> 0.9; H2N(CH2)5NH2 11.05/9.74
+#          (6) -> 0.7                                                (p15)
+#          piperazine 9.82/5.68 (3, same ring) -> 3.5; triethylenediamine
+#          8.19/4.18 -> 3.4                                          (p20)
+#   acids  (OH oxygen to OH oxygen) oxalic 1.23/4.19 (3) -> 2.4; malonic
+#          2.83/5.69 (4) -> 2.3; succinic 4.19/5.48 (5) -> 0.7; glutaric
+#          4.34/5.42 (6) -> 0.5; adipic 4.42/5.41 (7) -> 0.4          (p7)
+# Under 3 bonds (no symmetric reference) the 3-bond value is used; 7 bonds for
+# bases borrows the acid value; 8-10 bonds 0.3 and beyond 10 nothing are
+# extrapolations, not data. Opposite charges (zwitterions) are NOT coupled:
+# the correction only ever removes charge. Through an aromatic ring the real
+# coupling is larger (pyrazine, pyrimidine), so this under-corrects there.
+COUPLING_VERSION = "1"
+BASE_SHIFT = {3: 2.2, 4: 1.1, 5: 0.9, 6: 0.7, 7: 0.4}
+ACID_SHIFT = {3: 2.4, 4: 2.3, 5: 0.7, 6: 0.5, 7: 0.4}
+RING_SHIFT = 3.5                 # same ring, <= 3 bonds (piperazine, DABCO)
+FAR_SHIFT, FAR_BONDS = 0.3, 10
+MAX_EXACT_SITES = 12             # 2^12 microstates scored exactly
+
+
+class Coupling:
+    """Pairwise same-kind penalties for one molecule (the one site indices refer to)."""
+
+    def __init__(self, ref: Chem.Mol):
+        self.dist = Chem.GetDistanceMatrix(ref)
+        self.rings = [set(r) for r in ref.GetRingInfo().AtomRings()]
+
+    def shift(self, a: Site, b: Site) -> float:
+        if a.kind != b.kind or a.idx == b.idx:
+            return 0.0
+        d = int(self.dist[a.idx][b.idx])
+        if d <= 3 and any(a.idx in r and b.idx in r for r in self.rings):
+            return RING_SHIFT
+        table = BASE_SHIFT if a.kind == "basic" else ACID_SHIFT
+        if d <= 3:
+            return table[3]
+        if d in table:
+            return table[d]
+        return FAR_SHIFT if d <= FAR_BONDS else 0.0
+
+
+def _log_ratio(s: Site, ph: float) -> float:
+    """log10(changed / unchanged) for an isolated site."""
+    return s.pka - ph if s.kind == "basic" else ph - s.pka
+
+
+def coupled_microstates(sites: list[Site], ph: float, margin: float, coupling: Coupling):
+    """-> (variable sites, sites held changed, population factor of the rest,
+    {on-tuple over the variable sites: probability}).
+
+    A site already more than `margin` on the unchanged side stays there (the
+    penalty only pushes it further), so it is held unchanged and contributes
+    its isolated (1 - f). Past MAX_EXACT_SITES, the most strongly changed
+    sites are held changed (their penalties still count against the rest).
+    """
+    rest = 1.0
+    var = []
+    for s in sites:
+        if _log_ratio(s, ph) < -margin:
+            rest *= 1.0 - s.changed_fraction(ph)
+        else:
+            var.append(s)
+    held: list[Site] = []
+    if len(var) > MAX_EXACT_SITES:
+        var.sort(key=lambda s: abs(_log_ratio(s, ph)))
+        var, held = var[:MAX_EXACT_SITES], var[MAX_EXACT_SITES:]
+        for s in held:
+            rest *= s.changed_fraction(ph)
+    held_w = (sum(_log_ratio(s, ph) for s in held)
+              - sum(coupling.shift(a, b) for i, a in enumerate(held) for b in held[i + 1:]))
+    h = [_log_ratio(s, ph) for s in var]
+    with_held = [sum(coupling.shift(s, t) for t in held) for s in var]
+    pair = {(i, j): coupling.shift(var[i], var[j])
+            for i in range(len(var)) for j in range(i + 1, len(var))}
+    logw = {}
+    for on in product((0, 1), repeat=len(var)):
+        idx = [i for i, f in enumerate(on) if f]
+        logw[on] = (held_w + sum(h[i] - with_held[i] for i in idx)
+                    - sum(pair[i, j] for k, i in enumerate(idx) for j in idx[k + 1:]))
+    top = max(logw.values())
+    z = sum(10.0 ** (w - top) for w in logw.values())
+    probs = {on: 10.0 ** (w - top) / z for on, w in logw.items()}
+    return var, held, rest, probs
+
+
+def dominant_sites(sites: list[Site], ph: float, coupling: Coupling | None = None):
+    """The most populated microstate at this pH, as the set of changed sites."""
+    if coupling is None:
+        return [s for s in sites if s.changed_fraction(ph) >= 0.5]
+    var, held, _, probs = coupled_microstates(sites, ph, 0.0, coupling)
+    best = max(probs, key=probs.get)
+    return held + [s for f, s in zip(best, var) if f]
+
+
+def _enumerate_coupled(sites, ph, margin, max_ambiguous, coupling):
+    var, held, rest, probs = coupled_microstates(sites, ph, margin, coupling)
+    # each variable site's population-weighted chance of being changed: a site
+    # whose coupled log-ratio is beyond `margin` is locked, as in the
+    # independent rule (where the log-ratio is just pKa - pH)
+    lr = []
+    for i in range(len(var)):
+        m = sum(p for on, p in probs.items() if on[i])
+        m = min(max(m, 1e-12), 1 - 1e-12)
+        lr.append(math.log10(m / (1 - m)))
+    amb = [i for i in range(len(var)) if abs(lr[i]) <= margin]
+    if len(amb) > max_ambiguous:
+        amb = sorted(amb, key=lambda i: abs(lr[i]))[:max_ambiguous]
+    base = [1 if lr[i] > 0 else 0 for i in range(len(var))]
+    for combo in product((0, 1), repeat=len(amb)):
+        on = list(base)
+        for i, f in zip(amb, combo):
+            on[i] = f
+        changes = [(s.idx, s.delta) for s in held]
+        changes += [(s.idx, s.delta) for f, s in zip(on, var) if f]
+        yield tuple(sorted(changes)), probs[tuple(on)] * rest
+
+
 def enumerate_states(sites: list[Site], ph: float, margin: float,
-                     max_ambiguous: int):
+                     max_ambiguous: int, coupling: Coupling | None = None):
     """Yield (changes, population) for every state worth building at this pH."""
+    if coupling is not None:
+        yield from _enumerate_coupled(sites, ph, margin, max_ambiguous, coupling)
+        return
     locked: list[tuple[int, int]] = []
     ambiguous: list[Site] = []
     base_pop = 1.0
@@ -665,7 +807,8 @@ def unchanged_protomers(name: str, isomers: list[Chem.Mol],
 def build_protomers(name: str, isomers: list[Chem.Mol], ref: Chem.Mol,
                     sites: list[Site], ph_values: list[float], margin: float,
                     min_population: float, max_states: int, max_ambiguous: int,
-                    stereo: str, fallback_note: str = "built_on_qupkake_tautomer"):
+                    stereo: str, fallback_note: str = "built_on_qupkake_tautomer",
+                    coupling: bool = False):
     """One parent's sites -> its protomers at every pH, for every stereoisomer.
 
     `ref` is the molecule the site indices refer to (QupKake's SDF mol, or
@@ -682,29 +825,40 @@ def build_protomers(name: str, isomers: list[Chem.Mol], ref: Chem.Mol,
 
     # 1. collect unique protonation STATES for the parent, judged on the
     #    first isomer so a state gets one index across every isomer
-    states: dict[tuple, Protomer] = {}
+    #    Keyed by the built SMILES, not by which sites changed: in a symmetric
+    #    molecule (piperazine) protonating either N gives one species, and its
+    #    population is the sum of the two microstates.
+    states: dict[str, Protomer] = {}
+    coupled = Coupling(ref) if coupling else None
     for ph in ph_values:
-        found = []
-        for changes, pop in enumerate_states(sites, ph, margin, max_ambiguous):
-            if pop < min_population:
-                dropped_states += 1
-                continue
+        by_smiles: dict[str, list] = {}
+        for changes, pop in enumerate_states(sites, ph, margin, max_ambiguous, coupled):
             probe = apply_changes(isomers[0] if use_isomer else ref, changes,
                                   isomers[0], stereo)
             if probe is None:
-                build_failures += 1
+                if pop >= min_population:
+                    build_failures += 1
+                continue
+            if probe in by_smiles:
+                by_smiles[probe][1] += pop
+            else:
+                by_smiles[probe] = [changes, pop]
+        found = []
+        for probe, (changes, pop) in by_smiles.items():
+            if pop < min_population:
+                dropped_states += 1
                 continue
             found.append((changes, pop, probe))
-        found.sort(key=lambda x: -x[1])
+        found.sort(key=lambda x: (-x[1], x[2]))
         if len(found) > max_states:
             dropped_states += len(found) - max_states
             found = found[:max_states]
         for changes, pop, probe in found:
-            if changes in states:
-                states[changes].ph_values.append(ph)
-                states[changes].population = max(states[changes].population, pop)
+            if probe in states:
+                states[probe].ph_values.append(ph)
+                states[probe].population = max(states[probe].population, pop)
             else:
-                states[changes] = Protomer(
+                states[probe] = Protomer(
                     parent=name, smiles=probe,
                     charge=Chem.GetFormalCharge(Chem.MolFromSmiles(probe)),
                     ph_values=[ph], population=pop, changes=changes)
@@ -1002,6 +1156,9 @@ def main(argv=None):
                     help="max protomers kept per molecule per pH (highest population)")
     ap.add_argument("--max-ambiguous", type=int, default=6,
                     help="max simultaneously-enumerated sites (2^N states)")
+    ap.add_argument("--coupling", choices=["on", "off"], default="on",
+                    help="penalize two same-kind sites charged together (diamine/diacid "
+                         "micro-pKa shifts; see Coupling); off = independent sites")
     ap.add_argument("--name-style",
                     choices=["short", "index", "charge", "ph"],
                     default="short",
@@ -1154,7 +1311,8 @@ def main(argv=None):
             print(f"      dropped {len(dropped_sites)} implausible site(s): "
                   f"{dict(Counter(r for *_, r in dropped_sites))} (dropped_sites.tsv)")
     (outdir / "site_filter.txt").write_text(
-        f"site_filter_version={'off' if args.keep_amide_sites else SITE_FILTER_VERSION}\n")
+        f"site_filter_version={'off' if args.keep_amide_sites else SITE_FILTER_VERSION}\n"
+        f"coupling={COUPLING_VERSION if args.coupling == 'on' else 'off'}\n")
     with open(outdir / "dropped_sites.tsv", "w") as fh:
         fh.write("name\tidx\tkind\tpka\treason\n")
         fh.writelines(f"{n}\t{i}\t{k}\t{p:.3f}\t{r}\n" for n, i, k, p, r in dropped_sites)
@@ -1197,7 +1355,8 @@ def main(argv=None):
         ref, sites = grouped[name]
         emitted, n_drop, n_fail, used_isomer = build_protomers(
             name, isomers, ref, sites, args.ph, args.margin, args.min_population,
-            args.max_states, args.max_ambiguous, args.stereo)
+            args.max_states, args.max_ambiguous, args.stereo,
+            coupling=args.coupling == "on")
         dropped_states += n_drop
         build_failures += [name] * n_fail
         if not used_isomer:
@@ -1263,6 +1422,7 @@ def main(argv=None):
     stats["settings"] = {"ph": args.ph, "margin": args.margin,
                          "min_population": args.min_population,
                          "max_states": args.max_states,
+                         "coupling": COUPLING_VERSION if args.coupling == "on" else "off",
                          "tautomerize": args.tautomerize,
                          "name_style": args.name_style,
                          "stereo": args.stereo,
