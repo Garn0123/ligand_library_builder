@@ -109,8 +109,10 @@ def main(argv=None) -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("protomers_csv",
                     help="protomers.csv (qupkake_protomers.py) or library.tsv (assign_names.py)")
-    ap.add_argument("--outputpath", required=True,
-                    help="db2_converter --outputpath, or a submit_db2.sh run's out/ "
+    ap.add_argument("--outputpath", required=True, action="append",
+                    help="repeatable: e.g. the main run's out/ and a fallback run's out/ "
+                         "(a name that failed in one and built in another is OK). "
+                         "db2_converter --outputpath, or a submit_db2.sh run's out/ "
                          "(searched recursively)")
     ap.add_argument("--faillist", action="append", default=[],
                     help=".faillist written by build_ligand (repeatable); default: "
@@ -125,7 +127,7 @@ def main(argv=None) -> int:
     ap.add_argument("-o", "--report", default="db2_verification.csv")
     args = ap.parse_args(argv)
 
-    outdir = Path(args.outputpath)
+    outdirs = [Path(o) for o in args.outputpath]
     # protomers.csv (qupkake_protomers.py) or library.tsv (assign_names.py)
     with open(args.protomers_csv) as fh:
         tsv = args.protomers_csv.endswith(".tsv")
@@ -138,9 +140,13 @@ def main(argv=None) -> int:
     fail_reasons: dict[str, str] = {}
     # One index over the whole tree: a submit_db2.sh run keeps each shard's
     # results in out/NNNN/, and globbing per name would be N directory scans.
-    all_db2, found_faillists = scan(outdir, args.deep)
-    print(f"  {len(all_db2):,} db2 file(s), {len(found_faillists):,} faillist(s) under {outdir}",
-          flush=True)
+    all_db2, found_faillists = [], []
+    for outdir in outdirs:
+        db2s, fls = scan(outdir, args.deep)
+        all_db2 += db2s
+        found_faillists += fls
+        print(f"  {len(db2s):,} db2 file(s), {len(fls):,} faillist(s) under {outdir}",
+              flush=True)
     exact_index: dict[str, list[Path]] = {}
     split_index: dict[str, list[Path]] = {}
     for f in all_db2:
