@@ -89,6 +89,48 @@ def closure(smi: str) -> list[str]:
     return sorted({Chem.MolToSmiles(x) for x in EnumerateStereoisomers(m, options=DB2C_OPTS)})
 
 
+_EMBED_CACHE: dict[str, bool] = {}
+
+
+def needs_embed_check(m: Chem.Mol) -> bool:
+    """A specified tetrahedral centre on an atom in two or more rings (fused,
+    bridged, spiro, cage): where a stereo label can describe a shape that
+    cannot exist. Elsewhere every combination is buildable."""
+    ri = m.GetRingInfo()
+    return any(a.GetChiralTag() != Chem.ChiralType.CHI_UNSPECIFIED
+               and ri.NumAtomRings(a.GetIdx()) >= 2 for a in m.GetAtoms())
+
+
+def embeddable(smi: str) -> bool:
+    """Can RDKit build this stereoisomer in 3D at all?
+
+    The closure enumerates every centre independently (as db2_converter does),
+    so on a cage it also writes configurations that cannot exist: 11 of 14
+    3chemistrycheck failures checked on the drug-like 10k fail to embed (the
+    conformer generator builds the possible isomer and the stereo check then
+    fails). ETKDGv3 capped at 10 attempts, two seeds: on 48 closure isomers of
+    those cages it agreed with uncapped ETKDG and with random coordinates on
+    every one, at 1.2 s instead of 58 s (impossible isomers are what is slow).
+    """
+    if smi in _EMBED_CACHE:
+        return _EMBED_CACHE[smi]
+    from rdkit.Chem import AllChem
+    m = Chem.MolFromSmiles(smi)
+    ok = True
+    if m is not None and needs_embed_check(m):
+        mh = Chem.AddHs(m)
+        ok = False
+        for seed in (0xC0FFEE, 0xBEEF):
+            ps = AllChem.ETKDGv3()
+            ps.randomSeed = seed
+            ps.maxIterations = 10
+            if AllChem.EmbedMolecule(mh, ps) != -1:
+                ok = True
+                break
+    _EMBED_CACHE[smi] = ok
+    return ok
+
+
 def invertomer_key(smi: str) -> str:
     """SMILES with the configuration of every N-H+ centre erased.
 
@@ -136,6 +178,9 @@ def main(argv=None) -> int:
     ap.add_argument("-o", "--outdir", default="library")
     ap.add_argument("--max-stereo", type=int, default=32,
                     help="isomers per protomer; db2_converter skips > 32")
+    ap.add_argument("--no-embed-check", action="store_true",
+                    help="keep stereoisomers RDKit cannot embed (cage configurations "
+                         "that cannot exist; db2_converter fails them as 3chemistrycheck)")
     ap.add_argument("--allow-partial", action="store_true",
                     help="name what is finished even if some shards are not")
     args = ap.parse_args(argv)
@@ -185,7 +230,7 @@ def main(argv=None) -> int:
     # ---- closure + naming ----------------------------------------------------
     library: list[dict] = []
     owner: dict[str, str] = {}                        # final SMILES -> name that holds it
-    closure_added = 0
+    closure_added = embed_dropped = 0
     for pid in sorted(rows_by_parent):
         by_state: dict[int, list[dict]] = defaultdict(list)
         for r in rows_by_parent[pid]:
@@ -211,6 +256,14 @@ def main(argv=None) -> int:
             if not_closed:
                 dropped.append((pid, str(p_old), "stereo_not_closed", not_closed[0]))
                 continue
+            if not args.no_embed_check:
+                impossible = [s for s in isomers if not embeddable(s)]
+                for s in impossible:
+                    dropped.append((pid, str(p_old), "stereo_cannot_embed", s))
+                embed_dropped += len(impossible)
+                isomers = [s for s in isomers if s not in impossible]
+                if not isomers:
+                    continue
             taken = [s for s in isomers if s in owner]
             for s in taken:
                 dropped.append((pid, str(p_old), "duplicate_structure",
@@ -295,6 +348,7 @@ def main(argv=None) -> int:
         "names": len(library),
         "protomers": len({(r["parent_id"], r["protomer_index"]) for r in library}),
         "stereo_closure_added": closure_added,
+        "stereo_cannot_embed": embed_dropped,
         "n_h_invertomers": sum(1 for r in library if r["invertomer_of"]),
         "dropped": dict(reasons),
         "net_charge": dict(sorted(Counter(r["net_charge"] for r in library).items())),
@@ -307,6 +361,9 @@ def main(argv=None) -> int:
           f"{stats['protomers']:,} protomers -> {stats['names']:,} names")
     print(f"  stereo closure added {closure_added:,} isomer(s) that --checkstereo would "
           f"otherwise have renamed")
+    if not args.no_embed_check:
+        print(f"  {embed_dropped:,} stereoisomer(s) dropped: no 3D structure exists "
+              f"(cage/bridged configurations; dropped.tsv stereo_cannot_embed)")
     print(f"  of which {stats['n_h_invertomers']:,} are N-H+ invertomers of another row "
           f"(library.tsv: invertomer_of) -- one species in solution; collapse downstream")
     for k, v in sorted(reasons.items()):
