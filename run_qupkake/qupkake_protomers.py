@@ -251,6 +251,82 @@ class Protomer:
 
 
 # --------------------------------------------------------------------------
+# aromatic N: MolGpKa's value when the molecule also has another base
+# --------------------------------------------------------------------------
+# pka_triage/reference (2026-10-16): alone, QupKake's aromatic N pKas are as good
+# as MolGpKa's (MAE 0.66 vs 0.51 on 20 measured rings). With a guanidine or a
+# dimethylamine two carbons away, QupKake's ring N takes the strong base's
+# value whatever the ring (oxazole 2.6 -> 10.3 / 8.6, pyrazine 2.9 -> 10.5 /
+# 8.9, tetrazole 3.0 -> 9.8 / 7.7); MolGpKa moves 0-3.5. So in a routed parent
+# that has a strong base off the ring (pKa >= STRONG_BASE_PKA from either tool,
+# on an atom neither aromatic nor bonded to one),
+# the basic sites on aromatic N come from MolGpKa (the triage's sites);
+# everything else stays QupKake's. A weak exocyclic base does not trigger it:
+# 4-aminopyridine alone is QupKake 9.49, MolGpKa 6.98, measured 9.17.
+AROMATIC_N_VERSION = "1"
+STRONG_BASE_PKA = 7.0
+
+
+def atom_map(src: Chem.Mol, parent: Chem.Mol) -> dict[int, int] | None:
+    """src heavy-atom index -> parent atom index, by substructure match."""
+    src = Chem.RemoveHs(src, sanitize=False)
+    m = src.GetSubstructMatch(parent)          # m[parent_idx] = src_idx
+    if len(m) != parent.GetNumAtoms():
+        return None
+    return {s: p for p, s in enumerate(m)}
+
+
+def molgpka_ref(smiles: str) -> Chem.Mol:
+    """The molecule the triage's site indices refer to (MolGpKa.predict)."""
+    return Chem.MolFromSmiles(Chem.MolToSmiles(_UNCHARGER.uncharge(Chem.MolFromSmiles(smiles))))
+
+
+def _aromatic_n(mol: Chem.Mol, s) -> bool:
+    a = mol.GetAtomWithIdx(s.idx)
+    return s.kind == "basic" and a.GetAtomicNum() == 7 and a.GetIsAromatic()
+
+
+def _strong_base_atom(a) -> bool:
+    """Not aromatic and not bonded to an aromatic atom: an aryl amine (aniline
+    4.6, the NH2 of an aminopyridine) is a weak base whatever a tool predicts,
+    and is not the kind of group that pulled QupKake's ring N values up."""
+    return not a.GetIsAromatic() and not any(n.GetIsAromatic() for n in a.GetNeighbors())
+
+
+def hybrid_aromatic_n(mol: Chem.Mol, qk_sites: list, mg_sites: list):
+    """-> (sites, [(atom, qupkake pKa or None, molgpka pKa or None)]).
+
+    mg_sites must already be on mol's atom indices. Unchanged unless some site
+    (either tool's) is basic at pKa >= STRONG_BASE_PKA on an atom that is neither
+    aromatic nor bonded to an aromatic atom.
+    """
+    other_base = any(s.kind == "basic" and s.pka >= STRONG_BASE_PKA
+                     and _strong_base_atom(mol.GetAtomWithIdx(s.idx))
+                     for s in [*qk_sites, *mg_sites])
+    if not other_base:
+        return qk_sites, []
+    q = {s.idx: s.pka for s in qk_sites if _aromatic_n(mol, s)}
+    m = {s.idx: s.pka for s in mg_sites if _aromatic_n(mol, s)}
+    if not q and not m:
+        return qk_sites, []
+    sites = [s for s in qk_sites if not _aromatic_n(mol, s)]
+    sites += [s for s in mg_sites if _aromatic_n(mol, s)]
+    return sites, [(i, q.get(i), m.get(i)) for i in sorted(set(q) | set(m))]
+
+
+def read_molgpka_sites(path: Path) -> dict[str, tuple[str, list]]:
+    """parent_id -> (parent SMILES, [Site on molgpka_ref indices]); a parent with
+    no MolGpKa site has a row with an empty idx."""
+    out: dict[str, tuple[str, list]] = {}
+    with open(path) as fh:
+        for r in csv.DictReader(fh, delimiter="\t"):
+            smi, sites = out.setdefault(r["parent_id"], (r["smiles"], []))
+            if r["idx"] != "":
+                sites.append(Site(idx=int(r["idx"]), kind=r["kind"], pka=float(r["pka"])))
+    return out
+
+
+# --------------------------------------------------------------------------
 # input / standardization
 # --------------------------------------------------------------------------
 # protomers.csv, read by assign_names.py and pka_triage/merge_protomers.py.
@@ -1299,6 +1375,11 @@ def main(argv=None):
                          "processes (array tasks) instead. Unset in QupKake itself, "
                          "this would be every core on the node.")
     ap.add_argument("--qupkake-exe", default="qupkake")
+    ap.add_argument("--molgpka-sites", default=None, metavar="TSV",
+                    help="the triage's MolGpKa sites for these parents (parent_id, smiles, "
+                         "idx, kind, pka); aromatic N basic sites are taken from it when the "
+                         "molecule has another base (hybrid_aromatic_n). llb reenumerate "
+                         "--molgpka-triage writes it")
     ap.add_argument("--from-sdf", default=None,
                     help="reuse an existing QupKake output SDF; skip prediction")
     ap.add_argument("--max-conf", type=int, default=None,
@@ -1412,9 +1493,39 @@ def main(argv=None):
         if dropped_sites:
             print(f"      dropped {len(dropped_sites)} implausible site(s): "
                   f"{dict(Counter(r for *_, r in dropped_sites))} (dropped_sites.tsv)")
+    hybrid_parents: set[str] = set()
+    if args.molgpka_sites:
+        mg_table = read_molgpka_sites(Path(args.molgpka_sites))
+        hybrid_rows, unmapped = [], []
+        for name, (mol, sites) in grouped.items():
+            if name not in mg_table:
+                continue
+            smi, mg = mg_table[name]
+            parent = Chem.MolFromSmiles(smi)
+            to_parent_q = atom_map(mol, parent)
+            to_parent_m = atom_map(molgpka_ref(smi), parent)
+            if to_parent_q is None or to_parent_m is None:
+                unmapped.append(name)
+                continue
+            from_parent_q = {p: q for q, p in to_parent_q.items()}
+            mg_here = [Site(idx=from_parent_q[to_parent_m[s.idx]], kind=s.kind, pka=s.pka)
+                       for s in mg if s.idx in to_parent_m]
+            new_sites, swaps = hybrid_aromatic_n(mol, sites, mg_here)
+            if swaps:
+                grouped[name] = (mol, new_sites)
+                hybrid_parents.add(name)
+                hybrid_rows += [(name, i, q, m) for i, q, m in swaps]
+        with open(outdir / "hybrid_sites.tsv", "w") as fh:
+            fh.write("name\tidx\tqupkake_pka\tmolgpka_pka\n")
+            fh.writelines(f"{n}\t{i}\t{'' if q is None else f'{q:.3f}'}\t"
+                          f"{'' if m is None else f'{m:.3f}'}\n" for n, i, q, m in hybrid_rows)
+        print(f"      aromatic N from MolGpKa in {len(hybrid_parents)} molecule(s) with another "
+              f"base ({len(hybrid_rows)} site(s), hybrid_sites.tsv)"
+              + (f"; {len(unmapped)} could not be mapped, kept QupKake's" if unmapped else ""))
     (outdir / "site_filter.txt").write_text(
         f"site_filter_version={'off' if args.keep_amide_sites else SITE_FILTER_VERSION}\n"
-        f"coupling={COUPLING_VERSION if args.coupling == 'on' else 'off'}\n")
+        f"coupling={COUPLING_VERSION if args.coupling == 'on' else 'off'}\n"
+        f"aromatic_n={'molgpka_hybrid_' + AROMATIC_N_VERSION if args.molgpka_sites else 'qupkake'}\n")
     with open(outdir / "dropped_sites.tsv", "w") as fh:
         fh.write("name\tidx\tkind\tpka\treason\n")
         fh.writelines(f"{n}\t{i}\t{k}\t{p:.3f}\t{r}\n" for n, i, k, p, r in dropped_sites)
@@ -1459,6 +1570,9 @@ def main(argv=None):
             name, isomers, ref, sites, args.ph, args.margin, args.min_population,
             args.max_states, args.max_ambiguous, args.stereo,
             coupling=args.coupling == "on")
+        if name in hybrid_parents:
+            for p in emitted:
+                p.note = ";".join(x for x in (p.note, "aromatic_n_from_molgpka") if x)
         dropped_states += n_drop
         build_failures += [name] * n_fail
         if not used_isomer:

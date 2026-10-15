@@ -194,22 +194,39 @@ harness.
    States are also merged by SMILES now: in a symmetric molecule protonating
    either N is one species, and was written twice before (both modes).
 
-1b. **QupKake on weak aromatic N bases (open, 2026-10-16).** On the drug-like
-   10k QupKake put pyrazine, oxazole, 1,2,3-triazole and tetrazole ring N's at
-   9-10 where MolGpKa gave 2.7-4.2 and pyrazine's measured pKa is 0.6; 186 of
-   4,743 aromatic-N sites both tools found had QupKake >= 6.4 with MolGpKa
-   <= 4, every example in a molecule with a strong base.
-   `reference/aromatic_n_bases.{smi,tsv}` (53 molecules: 20 rings with a
-   Williams value, 9 weak bases without, each ring tethered to a guanidine and
-   to a dimethylamine, and the four 10k parents) separates "QupKake is wrong on
-   these rings" from "wrong next to a strong base":
+1b. **Aromatic N in molecules with a strong base: MolGpKa's value (2026-10-16).**
+   On the drug-like 10k QupKake put pyrazine, oxazole, 1,2,3-triazole and
+   tetrazole ring N's at 9-10 where MolGpKa gave 2.7-4.2 (pyrazine measured
+   0.6). `reference/aromatic_n_bases.{smi,tsv}` (53 molecules; `llb
+   pka-reference`) separated the cases:
 
-       llb qupkake $(llb root)/pka_triage/reference/aromatic_n_bases.smi -o ref_qk --name-style index
-       llb pka-reference ref_qk
+   | | MolGpKa | QupKake |
+   |---|---|---|
+   | 20 measured rings, alone | MAE 0.51 | MAE 0.66 |
+   | ring two carbons from an N-ethylguanidine (~12) | 3.1-7.5 | 9.8-10.9, every ring |
+   | ... from a dimethylamine (~8.5) | 3.1-6.7 | 7.7-9.8 |
 
-   MolGpKa on the measured rings: MAE 0.51, worst 4-aminopyridine (6.98 vs
-   9.17). MolGpKa also raises a ring N by 2-4 units when a dimethylamine is
-   two carbons away (pyrazine 2.1 -> 6.1), which a neutral amine should not do.
+   QupKake's ring N takes the strong base's value whatever the ring (oxazole
+   2.6 alone -> 10.3), so it is an artefact, not chemistry; one guess, not
+   checked, is that xtb moves the proton to the strong base while optimizing
+   the ring-protonated structure. Alone, QupKake is fine (4-aminopyridine 9.49
+   vs 9.17 measured, where MolGpKa says 6.98).
+
+   Policy (`qupkake_protomers.hybrid_aromatic_n`, aromatic_n version 1): in a
+   routed parent with a strong base off the ring -- a basic site at pKa >= 7
+   from either tool, on an atom neither aromatic nor bonded to one (aryl
+   amines excluded) -- the basic sites on aromatic N are MolGpKa's (the
+   triage's sites); QupKake keeps everything else. Applied after the QupKake
+   array, without xtb:
+
+       llb reenumerate triage/routed protomers_qk protomers_qk_h --molgpka-triage triage
+
+   Each swap is in `hybrid_sites.tsv` (QupKake and MolGpKa pKa per atom), and
+   the protomers carry note `aromatic_n_from_molgpka`. `llb merge` refuses
+   shards without it (`--qupkake-aromatic-n` to accept QupKake's own values).
+   MolGpKa also raises a ring N by 2-4 units next to a neutral amine (pyrazine
+   2.1 -> 6.1); with no measurement for those molecules, the coupling
+   correction (the amine is charged first) is what keeps that in check.
 
 2. **Two thresholds, not one.** `--margin` (default 1.0) decides which sites are
    enumerated both ways. The proposed 1.5 decides which *molecules* go to

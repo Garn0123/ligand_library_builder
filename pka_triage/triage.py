@@ -325,8 +325,10 @@ def finish(args, manifest) -> int:
         print(f"\nnext: llb submit-qupkake {rdir} protomers_qk --time=...   "
               f"({len(rows)} shard(s) of <= {args.qupkake_shard_size}; time from the "
               f"preflight, {rdir}/preflight.smi)")
-        print(f"then: llb merge --parents {args.parents} --triage {args.outdir} "
-              f"--qupkake protomers_qk -o merged")
+        print(f"then: llb reenumerate {rdir} protomers_qk protomers_qk_h "
+              f"--molgpka-triage {args.outdir}   (aromatic N from MolGpKa; no xtb)")
+        print(f"      llb merge --parents {args.parents} --triage {args.outdir} "
+              f"--qupkake protomers_qk_h -o merged")
     else:
         print(f"\nnothing routed. next: llb merge --parents {args.parents} "
               f"--triage {args.outdir} -o merged")

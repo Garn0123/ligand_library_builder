@@ -54,6 +54,10 @@ def main(argv=None) -> int:
     ap.add_argument("parents", type=Path, help="parents directory QK_IN was run on")
     ap.add_argument("qk_in", type=Path)
     ap.add_argument("qk_out", type=Path)
+    ap.add_argument("--molgpka-triage", type=Path, default=None, metavar="TRIAGE_DIR",
+                    help="take aromatic N basic sites from this triage's MolGpKa sites in "
+                         "molecules that also have another base (qupkake_protomers."
+                         "hybrid_aromatic_n); llb merge requires it")
     ap.add_argument("-v", "--verbose", action="store_true",
                     help="show qupkake_protomers.py's own output per shard")
     args, extra = ap.parse_known_args(argv)
@@ -62,6 +66,19 @@ def main(argv=None) -> int:
 
     with open(args.parents / "shards.tsv") as fh:
         manifest = {int(r["index"]): r for r in csv.DictReader(fh, delimiter="\t")}
+    mg_sites: dict[str, list[dict]] = {}
+    if args.molgpka_triage is not None:
+        shards = sorted((args.molgpka_triage / "shards").glob("shard_*"))
+        if not shards:
+            raise SystemExit(f"{args.molgpka_triage}/shards/ not found; is it a triage -o?")
+        for sd in shards:
+            with open(sd / "sites.tsv") as fh:
+                for row in csv.DictReader(fh, delimiter="\t"):
+                    if row.get("kept", "1") == "1":
+                        mg_sites.setdefault(row["parent_id"], []).append(row)
+            with open(sd / "decisions.tsv") as fh:
+                for row in csv.DictReader(fh, delimiter="\t"):
+                    mg_sites.setdefault(row["parent_id"], [])
     rev = commit()
     done_n = skipped = 0
     drops = 0
@@ -81,12 +98,29 @@ def main(argv=None) -> int:
         out = args.qk_out / d.name
         if (out / "DONE").exists():
             continue
+        hybrid = []
+        if args.molgpka_triage is not None:
+            out.mkdir(parents=True, exist_ok=True)
+            tsv = out / "molgpka_sites.tsv"
+            with open(tsv, "w") as fh:
+                fh.write("parent_id\tsmiles\tidx\tkind\tpka\n")
+                for line in (args.parents / r["path"]).read_text().splitlines():
+                    if not line.strip():
+                        continue
+                    smi, pid = line.split()[:2]
+                    if pid not in mg_sites:
+                        raise SystemExit(f"{pid} is not in {args.molgpka_triage}; was the "
+                                         f"triage run on the same parents?")
+                    rows = mg_sites[pid] or [{"idx": "", "kind": "", "pka": ""}]
+                    fh.writelines(f"{pid}\t{smi}\t{x['idx']}\t{x['kind']}\t{x['pka']}\n"
+                                  for x in rows)
+            hybrid = ["--molgpka-sites", str(tsv)]
         cli = [str(args.parents / r["path"]), "-o", str(out), "--from-sdf", str(sdf),
                "--stereo", "carry", "--name-style", "index",
                "--ph", *old.get("ph", "6.4 7.4 8.4").split(),
                "--margin", old.get("margin", "1.0"),
                "--min-population", old.get("min_population", "0.01"),
-               "--max-states", old.get("max_states", "8"), *extra]
+               "--max-states", old.get("max_states", "8"), *hybrid, *extra]
         sink = contextlib.nullcontext() if args.verbose else contextlib.redirect_stdout(io.StringIO())
         with sink:
             rc = qupkake_protomers.main(cli)
@@ -103,6 +137,7 @@ def main(argv=None) -> int:
             (d / "DONE").read_text().rstrip("\n") + "\n"
             + f"reenumerated_from={d.resolve()}\nreenumerated_commit={rev}\n"
             + f"reenumerated_args={' '.join(extra)}\n"
+            + (f"molgpka_triage={args.molgpka_triage.resolve()}\n" if hybrid else "")
             + f"reenumerated={time.strftime('%Y-%m-%dT%H:%M:%S')}\n")
         done_n += 1
     print(f"{done_n} shard(s) rebuilt from their QupKake SDFs -> {args.qk_out}  "

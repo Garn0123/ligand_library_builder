@@ -50,7 +50,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "run_qupkake"))
 
-from qupkake_protomers import PROTOMER_COLUMNS  # noqa: E402
+from qupkake_protomers import AROMATIC_N_VERSION, PROTOMER_COLUMNS  # noqa: E402
 
 OUT_COLUMNS = PROTOMER_COLUMNS + ["site_source", "route_reason"]
 
@@ -138,6 +138,18 @@ def load_qupkake(args, routed_ids: set[str], settings: dict):
                              f"  llb reenumerate {rdir} {args.qupkake} NEW_DIR\n"
                              f"or rerun the triage into a new -o with the matching "
                              f"--coupling")
+        # ... and aromatic N taken from MolGpKa where the molecule has another base
+        want_a = ("qupkake" if args.qupkake_aromatic_n
+                  else f"molgpka_hybrid_{AROMATIC_N_VERSION}")
+        have_a = (read_done(d / "site_filter.txt").get("aromatic_n", "qupkake")
+                  if (d / "site_filter.txt").exists() else "qupkake")
+        if have_a != want_a:
+            raise SystemExit(f"{d} has aromatic_n={have_a}; merge wants {want_a}. Rebuild "
+                             f"it from its SDFs with the triage's MolGpKa sites (no xtb):\n"
+                             f"  llb reenumerate {rdir} {args.qupkake} NEW_DIR "
+                             f"--molgpka-triage {args.triage}\n"
+                             f"and pass --qupkake NEW_DIR (or --qupkake-aromatic-n to keep "
+                             f"QupKake's aromatic N pKas; see TRIAGE.md 1b)")
         prov.append(f"qupkake_shard_{int(r['index']):05d}={r['sha256']}")
         with open(d / "protomers.csv") as fh:
             for row in csv.DictReader(fh):
@@ -173,6 +185,9 @@ def main(argv=None) -> int:
                          "parents; only its routed parents are used")
     ap.add_argument("-o", "--outdir", type=Path, default=Path("merged"))
     ap.add_argument("--on-qupkake-fail", choices=["molgpka", "drop"], default="molgpka")
+    ap.add_argument("--qupkake-aromatic-n", action="store_true",
+                    help="accept QupKake shards whose aromatic N pKas are QupKake's own "
+                         "(not rebuilt with llb reenumerate --molgpka-triage)")
     ap.add_argument("--allow-partial", action="store_true")
     args = ap.parse_args(argv)
 

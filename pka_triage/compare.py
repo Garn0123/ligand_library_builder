@@ -45,7 +45,7 @@ sys.path.insert(0, str(HERE.parent / "run_qupkake"))
 from rdkit import Chem, RDLogger  # noqa: E402
 from rdkit.Chem.MolStandardize import rdMolStandardize  # noqa: E402
 
-from qupkake_protomers import (Coupling, Site, dominant_sites,  # noqa: E402
+from qupkake_protomers import (Coupling, Site, atom_map, dominant_sites,  # noqa: E402
                                filter_sites, parse_qupkake_sdf)
 
 RDLogger.DisableLog("rdApp.*")
@@ -94,13 +94,7 @@ def context(mol: Chem.Mol, idx: int, radius: int = 2) -> str:
     return Chem.MolToSmiles(m)
 
 
-def mapping(src: Chem.Mol, parent: Chem.Mol) -> dict[int, int] | None:
-    """src heavy-atom index -> parent atom index, by substructure match."""
-    src = Chem.RemoveHs(src, sanitize=False)
-    m = src.GetSubstructMatch(parent)          # m[parent_idx] = src_idx
-    if len(m) != parent.GetNumAtoms():
-        return None
-    return {s: p for p, s in enumerate(m)}
+mapping = atom_map
 
 
 def dominant(sites: list[Site], ph: float, coupling: Coupling | None = None) -> frozenset:
