@@ -37,7 +37,10 @@ Also filtered, in BOTH paths (`qupkake_protomers.IMPLAUSIBLE_SITES`,
   thioamides; real ~13-17). On Owen's 50 QupKake put 44 of these at 2.4-6.7,
   so the all-QupKake library had an amide ANION as the dominant state at
   pH 7.4 in 22 of 50 parents; all 5 "settled but disagree" parents were this.
-  Imide N-H and N-sulfonyl N-H are kept (genuinely acidic).
+  Imide N-H and N-sulfonyl N-H are kept (genuinely acidic);
+- carbon as an acid (`carbon_acid`, site filter v4), except a CH between two
+  ketone/aldehyde carbonyls or a CH carrying a nitro group. MolGpKa put
+  malonic acid's CH2 at 7.5 and built a [CH-] trianion.
 Sources for the amide numbers (checked 2026-10-08):
 
 | value | compound | solvent | source |
@@ -52,6 +55,29 @@ Sources for the amide numbers (checked 2026-10-08):
 | -12.4 / -7.8 / -3.8 / -2.2 | protonated nitrobenzene / benzoic acid / dimethyl ether / methanol | water | Reich, *Equilibrium pKa Table (H2O)*, "Oxygen Acids" |
 | 16 / 20 (approximate) / 10.0 | methanol / tert-butanol / phenol O-H | water | same page |
 | -0.62 +/- 0.07, -0.42, -0.28 | protonated acetamide, N-methylacetamide, N,N-dimethylacetamide | water, 298 K | Grant, McTigue & Ward, *Aust. J. Chem.* 1983, 36, 2211-2218, doi:10.1071/CH9832211 |
+
+Carbon acids, water, from R. Williams, *pKa Data Compiled by R. Williams*
+(ACS Organic Division, updated 4/7/2022), "Carbon Acids", pp. 31-32, and
+dimedone p. 29 (checked 2026-10-15):
+
+| value | compound | kept? |
+|---|---|---|
+| 8.95 / 9 | acetylacetone | kept (1,3-diketone) |
+| 8.23 (enol), 9.4 | benzoylacetone | kept |
+| 5.23 / 5.85 / 5 | dimedone / triacetylmethane / malondialdehyde | kept |
+| 4.7 / 6.82 | CF3COCH2COCH3 / C6H5COCH2COCF3 | kept |
+| 7.74 / 8.6 / 10.29 | 2-nitropropane / nitroethane / nitromethane | kept (nitro) |
+| 10.68 / 10 | ethyl / methyl acetoacetate | dropped |
+| 9 / 11.81 | ethyl cyanoacetate / malononitrile | dropped |
+| 13.3 | diethyl malonate | dropped |
+| ~20 / ~25 / ~23 | acetone / acetonitrile / dimethyl sulfone | dropped |
+
+The `carbon_acid` row: only the 1,3-dicarbonyl (ketone/aldehyde) and nitro
+classes reach the 6.4-8.4 window; ester-, nitrile- and sulfone-activated CH
+sit at 9 or above. Known miss: Meldrum's acid (cyclic malonate diester, water
+pKa about 4.8; not in this compilation) is dropped by the rule, as is any
+other doubly ester-activated CH that is unusually acidic. Enol forms are O-H
+sites and are not affected.
 
 The oxygen rows back `oxygen_base` and `alcohol_oh_acid` (site filter v3,
 2026-10-14): Owen's rebuild had C(=O)[OH2+], a protonated nitro group and an

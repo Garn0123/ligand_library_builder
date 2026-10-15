@@ -9,8 +9,9 @@ triage.py -- MolGpKa on every parent; QupKake only for the ones it can't settle.
 Reads a prepare_parents.py directory (parents.tsv, shards.tsv, shards/) and, for
 each parent shard, writes  triage/shards/shard_NNNNN/:
 
-  sites.tsv       every MolGpKa site: parent_id, idx, kind, pka, kept (for the
-                  harness; kept=0 = dropped by qupkake_protomers.IMPLAUSIBLE_SITES)
+  sites.tsv       every MolGpKa site: parent_id, idx, kind, pka, kept, dropped_reason
+                  (for the harness; kept=0 = dropped by
+                  qupkake_protomers.IMPLAUSIBLE_SITES, which rule in dropped_reason)
   decisions.tsv   per parent: route (molgpka | qupkake), reason, min_gap, ...
   protomers.csv   MolGpKa protomers for EVERY parent, routed ones included (the
                   merge falls back to them if QupKake fails, and the harness
@@ -138,7 +139,8 @@ def triage_shard(rows: list[tuple[str, str]], model: MolGpKa, args):
         for s in found:
             keep = (s.idx, s.kind) not in bad
             (sites if keep else dropped).append(Site(idx=s.idx, kind=s.kind, pka=s.pka))
-            site_rows.append((pid, s.idx, s.kind, f"{s.pka:.3f}", int(keep)))
+            site_rows.append((pid, s.idx, s.kind, f"{s.pka:.3f}", int(keep),
+                              bad.get((s.idx, s.kind), "")))
         isomers = [mol]                              # --stereo carry, as the array runs
 
         if not sites:
@@ -214,7 +216,7 @@ def run_part(args, manifest, settings_sha) -> int:
         out.mkdir(parents=True, exist_ok=True)
         write_tsv(out / "decisions.tsv", DECISION_COLUMNS, decisions)
         with open(out / "sites.tsv", "w") as fh:
-            fh.write("parent_id\tidx\tkind\tpka\tkept\n")
+            fh.write("parent_id\tidx\tkind\tpka\tkept\tdropped_reason\n")
             fh.writelines("\t".join(map(str, s)) + "\n" for s in site_rows)
         with open(out / "protomers.csv", "w", newline="") as fh:
             w = csv.writer(fh, lineterminator="\n")
@@ -242,9 +244,15 @@ def finish(args, manifest) -> int:
         raise SystemExit(f"{len(missing)} shard(s) not triaged yet, e.g. {missing[:5]}; "
                          f"run the remaining --part slices first")
     decisions = []
+    dropped_by = Counter()
     for r in manifest:
-        with open(args.outdir / "shards" / f"shard_{int(r['index']):05d}" / "decisions.tsv") as fh:
+        sd = args.outdir / "shards" / f"shard_{int(r['index']):05d}"
+        with open(sd / "decisions.tsv") as fh:
             decisions += list(csv.DictReader(fh, delimiter="\t"))
+        with open(sd / "sites.tsv") as fh:
+            dropped_by.update(row.get("dropped_reason") or "unknown (filter v3 or older)"
+                              for row in csv.DictReader(fh, delimiter="\t")
+                              if row["kept"] == "0")
     write_tsv(args.outdir / "decisions.tsv", DECISION_COLUMNS, decisions)
 
     with open(args.parents / "parents.tsv") as fh:
@@ -285,6 +293,7 @@ def finish(args, manifest) -> int:
         "by_reason": dict(reasons),
         "no_sites_predicted": sum(1 for d in decisions if d["note"] == "no_sites_predicted"),
         "parents_with_coupled_pairs": coupled,
+        "molgpka_sites_dropped": dict(dropped_by),
         "failed_or_unbuildable": hard,
         "min_gap_median": round(sorted(gaps)[len(gaps) // 2], 3) if gaps else None,
         "routed_fraction_by_window": curve,
@@ -298,6 +307,9 @@ def finish(args, manifest) -> int:
     for k_, v in sorted(reasons.items(), key=lambda x: -x[1]):
         print(f"  {k_:<26} {v:,}")
     print(f"  ({stats['no_sites_predicted']:,} decided parents had no MolGpKa site)")
+    if dropped_by:
+        print("  MolGpKa sites dropped as implausible: " + ", ".join(
+            f"{k_} {v:,}" for k_, v in dropped_by.most_common()))
     print("  routed fraction if --route-window were:  " + "  ".join(
         f"{w}:{c['near_window_or_coupled' if args.coupled == 'route' else 'near_window']:.0%}"
         for w, c in curve.items() if float(w) in (0.5, 1.0, 1.5, 2.0, 2.5, 3.0)))

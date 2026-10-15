@@ -123,13 +123,24 @@ IMPLAUSIBLE_SITES = {
     ("acidic", "alcohol_oh_acid"): Chem.MolFromSmarts("[#8X2;H1][CX4]"),
     ("basic", "amide_n_base"): Chem.MolFromSmarts(
         "[#7;$([#7]-[#6]=[#8,#16]),$([#7]-[#16](=[#8])=[#8])]"),
+    # C-H acids, except the two kinds with water pKa inside or near 6.4-8.4:
+    # a CH between two ketone/aldehyde carbonyls (acetylacetone 8.95, dimedone
+    # 5.23, triacetylmethane 5.85) and a CH carrying a nitro group
+    # (2-nitropropane 7.74, nitroethane 8.6). Ester-, nitrile- and sulfone-
+    # activated CH (ethyl acetoacetate 10.68, diethyl malonate 13.3,
+    # malononitrile 11.81) and everything less activated are dropped. MolGpKa
+    # put malonic acid's CH2 near pH 7 and built a [CH-] trianion.
+    ("acidic", "carbon_acid"): Chem.MolFromSmarts(
+        "[#6;!$([#6X4]-[#7+](=O)[#8-]);!$([#6X4]-[#7](=O)=O);"
+        "!$([#6X4](-[CX3;$(C=O);!$(C(=O)-[#7,#8,#16])])-[CX3;$(C=O);!$(C(=O)-[#7,#8,#16])])]"),
 }
 
 
 # Bumped whenever IMPLAUSIBLE_SITES changes, and written into every output
 # that depends on it, so runs filtered by different rules are never mixed.
-SITE_FILTER_VERSION = 3          # 1: amide rules (2026-10-08); 2: + amine_nh_acid;
+SITE_FILTER_VERSION = 4          # 1: amide rules (2026-10-08); 2: + amine_nh_acid;
                                  # 3: + oxygen_base, alcohol_oh_acid (2026-10-14)
+                                 # 4: + carbon_acid (2026-10-15)
 
 
 def implausible_sites(mol: Chem.Mol) -> dict[tuple[int, str], str]:
