@@ -270,13 +270,14 @@ class Protomer:
 # dimethylamine two carbons away, QupKake's ring N takes the strong base's
 # value whatever the ring (oxazole 2.6 -> 10.3 / 8.6, pyrazine 2.9 -> 10.5 /
 # 8.9, tetrazole 3.0 -> 9.8 / 7.7); MolGpKa moves 0-3.5. So in a routed parent
-# that has a strong base off the ring (pKa >= STRONG_BASE_PKA from either tool,
-# on an atom neither aromatic nor bonded to one),
+# that has a basic site off the ring (either tool's, on an atom neither
+# aromatic nor bonded to one; any pKa: v1 required >= 7 and missed a
+# tetrazole that QupKake put at 5.6-5.8 beside an amine both tools put at
+# 5.63 -- the same artefact with a weaker base),
 # the basic sites on aromatic N come from MolGpKa (the triage's sites);
 # everything else stays QupKake's. A weak exocyclic base does not trigger it:
 # 4-aminopyridine alone is QupKake 9.49, MolGpKa 6.98, measured 9.17.
-AROMATIC_N_VERSION = "1"
-STRONG_BASE_PKA = 7.0
+AROMATIC_N_VERSION = "2"
 
 
 def atom_map(src: Chem.Mol, parent: Chem.Mol) -> dict[int, int] | None:
@@ -298,7 +299,7 @@ def _aromatic_n(mol: Chem.Mol, s) -> bool:
     return s.kind == "basic" and a.GetAtomicNum() == 7 and a.GetIsAromatic()
 
 
-def _strong_base_atom(a) -> bool:
+def _off_ring_base_atom(a) -> bool:
     """Not aromatic and not bonded to an aromatic atom: an aryl amine (aniline
     4.6, the NH2 of an aminopyridine) is a weak base whatever a tool predicts,
     and is not the kind of group that pulled QupKake's ring N values up."""
@@ -309,11 +310,10 @@ def hybrid_aromatic_n(mol: Chem.Mol, qk_sites: list, mg_sites: list):
     """-> (sites, [(atom, qupkake pKa or None, molgpka pKa or None)]).
 
     mg_sites must already be on mol's atom indices. Unchanged unless some site
-    (either tool's) is basic at pKa >= STRONG_BASE_PKA on an atom that is neither
-    aromatic nor bonded to an aromatic atom.
+    (either tool's) is basic on an atom that is neither aromatic nor bonded to
+    an aromatic atom.
     """
-    other_base = any(s.kind == "basic" and s.pka >= STRONG_BASE_PKA
-                     and _strong_base_atom(mol.GetAtomWithIdx(s.idx))
+    other_base = any(s.kind == "basic" and _off_ring_base_atom(mol.GetAtomWithIdx(s.idx))
                      for s in [*qk_sites, *mg_sites])
     if not other_base:
         return qk_sites, []

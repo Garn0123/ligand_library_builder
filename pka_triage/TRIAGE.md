@@ -218,12 +218,13 @@ harness.
    the ring-protonated structure. Alone, QupKake is fine (4-aminopyridine 9.49
    vs 9.17 measured, where MolGpKa says 6.98).
 
-   Policy (`qupkake_protomers.hybrid_aromatic_n`, aromatic_n version 1): in a
-   routed parent with a strong base off the ring -- a basic site at pKa >= 7
-   from either tool, on an atom neither aromatic nor bonded to one (aryl
-   amines excluded) -- the basic sites on aromatic N are MolGpKa's (the
-   triage's sites); QupKake keeps everything else. Applied after the QupKake
-   array, without xtb:
+   Policy (`qupkake_protomers.hybrid_aromatic_n`, aromatic_n version 2): in a
+   routed parent with a basic site off the ring -- either tool's, any pKa, on
+   an atom neither aromatic nor bonded to one (aryl amines excluded) -- the
+   basic sites on aromatic N are MolGpKa's (the triage's sites); QupKake
+   keeps everything else. Version 1 required pKa >= 7 and missed a tetrazole
+   QupKake put at 5.6-5.8 beside an amine both tools put at 5.63: the same
+   artefact with a weaker base. Applied after the QupKake array, without xtb:
 
        llb reenumerate triage/routed protomers_qk protomers_qk_h --molgpka-triage triage
 
