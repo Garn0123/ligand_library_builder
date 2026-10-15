@@ -1,0 +1,54 @@
+name	smiles	exp_ring_n_pka	source	group	ring
+pyridine	c1ccncc1	5.14	Williams compilation (ACS Org. Div., rev. 4/7/2022) p23	alone	pyridine
+2-methylpyridine	Cc1ccccn1	5.94	Williams compilation (ACS Org. Div., rev. 4/7/2022) p25	alone	pyridine
+2-chloropyridine	Clc1ccccn1	0.49	Williams compilation (ACS Org. Div., rev. 4/7/2022) p25	alone	
+2-aminopyridine	Nc1ccccn1	6.86	Williams compilation (ACS Org. Div., rev. 4/7/2022) p25	alone	
+4-aminopyridine	Nc1ccncc1	9.17	Williams compilation (ACS Org. Div., rev. 4/7/2022) p25	alone	
+quinoline	c1ccc2ncccc2c1	4.85	Williams compilation (ACS Org. Div., rev. 4/7/2022) p23	alone	
+pyridazine	c1ccnnc1	2.10	Williams compilation (ACS Org. Div., rev. 4/7/2022) p23	alone	pyridazine
+pyrimidine	c1cncnc1	1.30	Williams compilation (ACS Org. Div., rev. 4/7/2022) p27 (1.10 p23)	alone	pyrimidine
+2-aminopyrimidine	Nc1ncccn1	3.54	Williams compilation (ACS Org. Div., rev. 4/7/2022) p27	alone	
+pyrazine	c1cnccn1	0.6	Williams compilation (ACS Org. Div., rev. 4/7/2022) p27 (0.37 p23; 1.1 p27)	alone	pyrazine
+2-methylpyrazine	Cc1cnccn1	1.5	Williams compilation (ACS Org. Div., rev. 4/7/2022) p27	alone	pyrazine
+2_6-dimethylpyrazine	Cc1cncc(C)n1	2.5	Williams compilation (ACS Org. Div., rev. 4/7/2022) p27	alone	pyrazine
+2-aminopyrazine	Nc1cnccn1	3.14	Williams compilation (ACS Org. Div., rev. 4/7/2022) p27	alone	
+imidazole	c1c[nH]cn1	6.95	Williams compilation (ACS Org. Div., rev. 4/7/2022) p25	alone	imidazole
+2-methylimidazole	Cc1ncc[nH]1	7.75	Williams compilation (ACS Org. Div., rev. 4/7/2022) p25	alone	
+4-methylimidazole	Cc1c[nH]cn1	7.45	Williams compilation (ACS Org. Div., rev. 4/7/2022) p25	alone	imidazole
+benzimidazole	c1ccc2[nH]cnc2c1	5.53	Williams compilation (ACS Org. Div., rev. 4/7/2022) p24 (5.4 p25)	alone	
+2-aminothiazole	Nc1nccs1	5.39	Williams compilation (ACS Org. Div., rev. 4/7/2022) p28	alone	
+benzothiazole	c1ccc2scnc2c1	1.2	Williams compilation (ACS Org. Div., rev. 4/7/2022) p24	alone	
+benzotriazole	c1ccc2[nH]nnc2c1	1.6	Williams compilation (ACS Org. Div., rev. 4/7/2022) p24	alone	
+oxazole	c1cocn1	NA	not in the compilation; a weak base, expected < 4	alone	oxazole
+4-methyloxazole	Cc1cocn1	NA	not in the compilation; a weak base, expected < 4	alone	oxazole
+thiazole	c1cscn1	NA	not in the compilation; a weak base, expected < 4	alone	thiazole
+pyrazole	c1cn[nH]c1	NA	not in the compilation; a weak base, expected < 4	alone	
+1-methylimidazole	Cn1ccnc1	NA	not in the compilation; a weak base, expected < 4	alone	
+1-methyl-1_2_3-triazole	Cn1ccnn1	NA	not in the compilation; a weak base, expected < 4	alone	triazole123
+1-methyl-1_2_4-triazole	Cn1cncn1	NA	not in the compilation; a weak base, expected < 4	alone	triazole124
+1-methyltetrazole	Cn1cnnn1	NA	not in the compilation; a weak base, expected < 4	alone	tetrazole
+1_5-dimethyltetrazole	Cc1nnnn1C	NA	not in the compilation; a weak base, expected < 4	alone	tetrazole
+pyridine-guanidine	CCN=C(N)NCCc1ccncc1	NA	no measurement; the ring N should be no more basic than alone	tethered_guanidine	pyridine
+pyridine-dimethylamine	CN(C)CCc1ccncc1	NA	no measurement; the ring N should be no more basic than alone	tethered_dimethylamine	pyridine
+pyridazine-guanidine	CCN=C(N)NCCc1cccnn1	NA	no measurement; the ring N should be no more basic than alone	tethered_guanidine	pyridazine
+pyridazine-dimethylamine	CN(C)CCc1cccnn1	NA	no measurement; the ring N should be no more basic than alone	tethered_dimethylamine	pyridazine
+pyrimidine-guanidine	CCN=C(N)NCCc1ccncn1	NA	no measurement; the ring N should be no more basic than alone	tethered_guanidine	pyrimidine
+pyrimidine-dimethylamine	CN(C)CCc1ccncn1	NA	no measurement; the ring N should be no more basic than alone	tethered_dimethylamine	pyrimidine
+pyrazine-guanidine	CCN=C(N)NCCc1cncc(C)n1	NA	no measurement; the ring N should be no more basic than alone	tethered_guanidine	pyrazine
+pyrazine-dimethylamine	CN(C)CCc1cncc(C)n1	NA	no measurement; the ring N should be no more basic than alone	tethered_dimethylamine	pyrazine
+imidazole-guanidine	CCN=C(N)NCCc1c[nH]cn1	NA	no measurement; the ring N should be no more basic than alone	tethered_guanidine	imidazole
+imidazole-dimethylamine	CN(C)CCc1c[nH]cn1	NA	no measurement; the ring N should be no more basic than alone	tethered_dimethylamine	imidazole
+oxazole-guanidine	CCN=C(N)NCCc1cocn1	NA	no measurement; the ring N should be no more basic than alone	tethered_guanidine	oxazole
+oxazole-dimethylamine	CN(C)CCc1cocn1	NA	no measurement; the ring N should be no more basic than alone	tethered_dimethylamine	oxazole
+thiazole-guanidine	CCN=C(N)NCCc1cscn1	NA	no measurement; the ring N should be no more basic than alone	tethered_guanidine	thiazole
+thiazole-dimethylamine	CN(C)CCc1cscn1	NA	no measurement; the ring N should be no more basic than alone	tethered_dimethylamine	thiazole
+triazole123-guanidine	CCN=C(N)NCCc1cn(CC)nn1	NA	no measurement; the ring N should be no more basic than alone	tethered_guanidine	triazole123
+triazole123-dimethylamine	CN(C)CCc1cn(CC)nn1	NA	no measurement; the ring N should be no more basic than alone	tethered_dimethylamine	triazole123
+triazole124-guanidine	CCN=C(N)NCCc1ncnn1C	NA	no measurement; the ring N should be no more basic than alone	tethered_guanidine	triazole124
+triazole124-dimethylamine	CN(C)CCc1ncnn1C	NA	no measurement; the ring N should be no more basic than alone	tethered_dimethylamine	triazole124
+tetrazole-guanidine	CCN=C(N)NCCn1nnnc1C	NA	no measurement; the ring N should be no more basic than alone	tethered_guanidine	tetrazole
+tetrazole-dimethylamine	CN(C)CCn1nnnc1C	NA	no measurement; the ring N should be no more basic than alone	tethered_dimethylamine	tetrazole
+ZINCll00000k0wI1	CCN=C(NCCc1cncc(C)n1)N[C@@H]1C[C@H]1C(F)F	NA	drug-like 10k parent; QupKake put this ring N at 9-10	parent	pyrazine
+ZINCif00000eX34t	CCN=C(NCc1cocn1)NC1CCOCC1	NA	drug-like 10k parent; QupKake put this ring N at 9-10	parent	oxazole
+ZINClj00000jFHma	C=C[C@@H](C)NC(=NCCc1cn(CC)nn1)NCC1CC1	NA	drug-like 10k parent; QupKake put this ring N at 9-10	parent	triazole123
+ZINCj500000JdzBJ	Cc1nnnn1CCC(=O)NCC[C@H]1CCCN1C	NA	drug-like 10k parent; QupKake put this ring N at 9-10	parent	tetrazole
