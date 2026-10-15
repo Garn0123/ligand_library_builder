@@ -49,7 +49,7 @@ def main(argv=None) -> int:
                          f"db2_converter env, or pass --db2c-src.")
     from rdkit import Chem, rdBase
 
-    split, unstable, badname, n = [], [], [], 0
+    split, unstable, badname, crashed, n = [], [], [], [], 0
     for line in open(args.smi):
         parts = line.split()
         if not parts:
@@ -58,7 +58,15 @@ def main(argv=None) -> int:
         n += 1
         if not CONTRACT.match(name):
             badname.append(name)
-        isomers = rdk_enumerate_smi(smi)
+        try:
+            isomers = rdk_enumerate_smi(smi)
+        except Exception as e:  # noqa: BLE001
+            # RDKit 2024.03.5 EnumerateStereoisomers can raise "Range Error idx2"
+            # on a double bond with no controlling atom on one end. The build
+            # catches it too (pipeline.write_enumerated_smifile), logs "cannot
+            # be parsed" and leaves the molecule out: no db2, nothing else lost.
+            crashed.append((name, smi, str(e).strip().splitlines()[0][:60]))
+            continue
         # db2_converter's test is len(outsmis) == 1, and it does not dedupe
         if len(isomers) != 1:
             split.append((name, len(isomers), smi))
@@ -84,6 +92,11 @@ def main(argv=None) -> int:
               f"(a wasted dock, not a split leak):")
         for name, a, b in unstable[:5]:
             print(f"           {name}  {a}\n                             -> {b}")
+    if crashed:
+        print(f"  [warn] {len(crashed):,} SMILES crash RDKit's stereo enumeration; "
+              f"build_ligand will skip them (logged 'cannot be parsed', no db2):")
+        for name, smi, err in crashed[:10]:
+            print(f"           {name}  {smi}  ({err})")
     if badname or split:
         return 1
     print("  [ok  ] every SMILES is stereo-closed; --checkstereo will leave all names alone")
