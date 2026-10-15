@@ -68,9 +68,17 @@ def shard_report(label: str, dones: list[Path], unit_ms: bool) -> None:
               f"(size --time from this, with headroom)")
 
 
+def build_tables(run: Path) -> list[Path]:
+    """llb_build.tsv files: RUN/out/NNNN/ (submit_db2.sh), or an --outputpath
+    itself / its subdirectories. Listed, not walked: a recursive walk crawls
+    every molecule's working directory and on NFS takes hours."""
+    return sorted({*run.glob("llb_build.tsv"), *run.glob("*/llb_build.tsv"),
+                   *run.glob("out/*/llb_build.tsv")})
+
+
 def db2_report(run: Path, library: Path | None) -> None:
     rows = {}
-    files = sorted(run.rglob("llb_build.tsv"))
+    files = build_tables(run)
     for f in files:
         with open(f) as fh:
             for r in csv.DictReader(fh, delimiter="\t"):
@@ -133,7 +141,7 @@ def main(argv=None) -> int:
             shard_report(f"triage {d}", sorted((d / "shards").glob("shard_*/DONE")), True)
         elif any(d.glob("shard_*/DONE")):
             shard_report(f"QupKake {d}", sorted(d.glob("shard_*/DONE")), False)
-        elif (d / "out").is_dir() or any(d.rglob("llb_build.tsv")):
+        elif (d / "out").is_dir() or build_tables(d):
             db2_report(d, args.library)
         else:
             print(f"\n== {d}: no triage, QupKake or db2 run found here", file=sys.stderr)

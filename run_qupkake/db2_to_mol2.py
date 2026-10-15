@@ -54,19 +54,35 @@ HEADER = re.compile(r"^##########\s+([A-Za-z0-9_]+):\s*(.*?)\s*$")
 SKIPPED = re.compile(r"^(.*?)\tSKIPPED\t([^:\s]+)")
 
 
-def find_db2(inputs: list[str]) -> list[Path]:
+def _listed(d: Path) -> list[Path]:
+    """*.db2.gz / *.db2 in d and its immediate subdirectories: where build_ligand
+    writes results (--outputpath, or a run's out/NNNN/). Listed, not walked: a
+    recursive walk also crawls every molecule's working directory, which on
+    NFS took hours on 22k names (2026-10-16)."""
+    dirs = [d]
+    with os.scandir(d) as it:
+        dirs += [Path(e.path) for e in it if e.is_dir(follow_symlinks=False)]
+    found = []
+    for x in dirs:
+        with os.scandir(x) as it:
+            found += [Path(e.path) for e in it
+                      if (e.name.endswith(".db2.gz") or e.name.endswith(".db2")) and e.is_file()]
+    return sorted(found)
+
+
+def find_db2(inputs: list[str], deep: bool = False) -> list[Path]:
     out = []
     for s in inputs:
         p = Path(s)
         if p.is_dir():
-            found = sorted(p.rglob("*.db2.gz")) + sorted(p.rglob("*.db2"))
+            found = (sorted(p.rglob("*.db2.gz")) + sorted(p.rglob("*.db2"))) if deep else _listed(p)
             # a build's working directory (NAME/db2/output.N.db2.gz) copied into
             # out/ mid-build by the array's periodic sync: partial, never final
-            stale = [f for f in found if f.parent.name == "db2" and f.name.startswith("output.")]
+            stale = {f for f in found if f.parent.name == "db2" and f.name.startswith("output.")}
             if stale:
                 print(f"  skipping {len(stale)} db2 file(s) inside build working "
-                      f"directories, e.g. {stale[0]}", file=sys.stderr)
-            out += [f for f in found if f not in set(stale)]
+                      f"directories, e.g. {next(iter(stale))}", file=sys.stderr)
+            out += [f for f in found if f not in stale]
         elif p.exists():
             out.append(p)
         else:
@@ -134,6 +150,9 @@ def main(argv=None) -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("inputs", nargs="+", help="db2 files or directories holding them")
     ap.add_argument("-o", "--output", required=True, help="multi-molecule mol2 to write")
+    ap.add_argument("--deep", action="store_true",
+                    help="search input directories recursively (slow on NFS; default: "
+                         "each directory and its immediate subdirectories)")
     ap.add_argument("--library", default=None,
                     help="library.tsv from assign_names.py: charge + completeness check")
     ap.add_argument("--db2tool", default=os.environ.get("DB2TOOL_EXE") or "db2tool",
@@ -146,7 +165,7 @@ def main(argv=None) -> int:
                          "only a different INTEGER charge is a mismatch")
     args = ap.parse_args(argv)
 
-    files = find_db2(args.inputs)
+    files = find_db2(args.inputs, args.deep)
     records, skipped, _ = run_tomol2(args.db2tool, files, keep_broken=False)
 
     # every-set-broken molecules: one more pass, over just the files that hold them

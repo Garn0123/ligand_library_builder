@@ -26,8 +26,9 @@ net formal charge you asked for.
 Usage
 -----
     python verify_db2_build.py library/library.tsv --outputpath db2_run/out
-    (or protomers.csv; --outputpath is searched recursively, and every
-    *.faillist under it is read unless --faillist is given)
+    (or protomers.csv; --outputpath and its immediate subdirectories are
+    searched, --deep for the whole tree, and every *.faillist found is read
+    unless --faillist is given)
 
 Exit 1 on a charge mismatch, a renamed or mangled name, or a molecule MISSING
 with no faillist entry -- a silent loss. Molecules build_ligand reported as
@@ -39,6 +40,7 @@ from __future__ import annotations
 import argparse
 import csv
 import gzip
+import os
 import re
 import sys
 from collections import Counter
@@ -73,6 +75,33 @@ def read_db2_header(path: Path) -> dict:
     return info
 
 
+def scan(outdir: Path, deep: bool) -> tuple[list[Path], list[Path]]:
+    """(*.db2.gz, *.faillist) under outdir.
+
+    build_ligand writes both flat into --outputpath, and a submit_db2.sh run's
+    out/ holds one such directory per shard (out/NNNN/). So by default only
+    outdir and its immediate subdirectories are listed: ~1,000 listings for a
+    1,000-shard run. A recursive walk also descends every molecule's working
+    directory and on NFS took over two hours on 22k names (2026-10-16); it also
+    finds db2_converter's working copies (NAME/db2/output.N.db2.gz), which are
+    not results. --deep restores it.
+    """
+    if deep:
+        return sorted(outdir.rglob("*.db2.gz")), sorted(outdir.rglob("*.faillist"))
+    db2, fails = [], []
+    dirs = [outdir]
+    with os.scandir(outdir) as it:
+        dirs += [Path(e.path) for e in it if e.is_dir(follow_symlinks=False)]
+    for d in dirs:
+        with os.scandir(d) as it:
+            for e in it:
+                if e.name.endswith(".db2.gz") and e.is_file():
+                    db2.append(Path(e.path))
+                elif e.name.endswith(".faillist") and e.is_file():
+                    fails.append(Path(e.path))
+    return sorted(db2), sorted(fails)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -84,6 +113,9 @@ def main(argv=None) -> int:
     ap.add_argument("--faillist", action="append", default=[],
                     help=".faillist written by build_ligand (repeatable); default: "
                          "every *.faillist under --outputpath")
+    ap.add_argument("--deep", action="store_true",
+                    help="search --outputpath recursively (slow on NFS; default: it "
+                         "and its immediate subdirectories, where build_ligand writes)")
     ap.add_argument("--charge-tol", type=float, default=0.05,
                     help="tolerance when comparing AMSOL charge to formal charge")
     ap.add_argument("-o", "--report", default="db2_verification.csv")
@@ -102,7 +134,9 @@ def main(argv=None) -> int:
     fail_reasons: dict[str, str] = {}
     # One index over the whole tree: a submit_db2.sh run keeps each shard's
     # results in out/NNNN/, and globbing per name would be N directory scans.
-    all_db2 = sorted(outdir.rglob("*.db2.gz"))
+    all_db2, found_faillists = scan(outdir, args.deep)
+    print(f"  {len(all_db2):,} db2 file(s), {len(found_faillists):,} faillist(s) under {outdir}",
+          flush=True)
     exact_index: dict[str, list[Path]] = {}
     split_index: dict[str, list[Path]] = {}
     for f in all_db2:
@@ -112,7 +146,7 @@ def main(argv=None) -> int:
         if m:
             split_index.setdefault(m.group(1), []).append(f)
 
-    faillists = [Path(f) for f in args.faillist] or sorted(outdir.rglob("*.faillist"))
+    faillists = [Path(f) for f in args.faillist] or found_faillists
     for fl in faillists:
         if not fl.exists():
             continue
@@ -122,7 +156,9 @@ def main(argv=None) -> int:
                 fail_reasons[parts[1]] = parts[3]
 
     rows, tally = [], Counter()
-    for exp in expected:
+    for k, exp in enumerate(expected, 1):
+        if k % 5000 == 0:
+            print(f"  checked {k:,} of {len(expected):,}", flush=True)
         name = exp["protomer_name"]
         want_q = int(exp["net_charge"])
 
