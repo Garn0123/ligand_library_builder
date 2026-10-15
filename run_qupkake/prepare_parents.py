@@ -19,6 +19,11 @@ What it does, in order:
   2. Standardize with qupkake_protomers.standardize (imported, not copied, so
                  the dedupe key is exactly the structure QupKake will see):
                  largest fragment, cleanup, neutralize.
+  2b. Tautomer. A ring imino tautomer (N=c1[nH]..., e.g. 2-iminopyridine) gets
+                 its proton moved to the amino form (qupkake_protomers.amino_tautomer):
+                 the dominant form in water, the one both pKa predictors should
+                 see, and the =NH crashes RDKit's stereo enumeration in the db2
+                 build. Recorded in parents.tsv tautomer_fix; --keep-imino skips it.
   3. Dedupe.     Same id twice -> keep the first; if the two SMILES disagree that
                  is recorded as an id_conflict. Same neutral structure under two
                  ids -> keep a ZINC id over a hashed one, then the smallest. Two ids for one structure would
@@ -56,7 +61,7 @@ from pathlib import Path
 from rdkit import Chem
 
 from llb_ids import base_id_of, is_zinc, parent_id
-from qupkake_protomers import standardize
+from qupkake_protomers import amino_tautomer, standardize
 
 # Only a sampler-style name (H17.smi, H17.smi.gz) declares a bin; a bare search
 # would read "H12" out of CHEMBL_H12.smi.
@@ -122,6 +127,9 @@ def main(argv=None) -> int:
                     help="parents per QupKake array task; each task is ONE core, so "
                          "size from the timing preflight (s/molecule x shard size)")
     ap.add_argument("--seed", type=int, default=20260923)
+    ap.add_argument("--keep-imino", action="store_true",
+                    help="keep ring imino tautomers (N=c1[nH]...) as given instead of "
+                         "moving the proton to the amino form (step 2b)")
     ap.add_argument("--preflight", type=int, default=20,
                     help="parents, spread across bins, written to preflight.smi")
     args = ap.parse_args(argv)
@@ -152,6 +160,11 @@ def main(argv=None) -> int:
                 if mol is None:
                     rejected.append((name, "unparsable", smi))
                     continue
+                fix = ""
+                if not args.keep_imino:
+                    amino = amino_tautomer(mol)
+                    if amino is not None:
+                        mol, fix = amino, "imino_to_amino"
                 std = Chem.MolToSmiles(mol)
                 if pid in by_id:
                     prev = by_id[pid]
@@ -168,7 +181,7 @@ def main(argv=None) -> int:
                 by_id[pid] = {"parent_id": pid, "base_id": base_id_of(pid),
                               "input_name": name, "id_kind": kind,
                               "zinc_id": pid if is_zinc(pid) else "",
-                              "smiles": std, "input_smiles": smi,
+                              "smiles": std, "input_smiles": smi, "tautomer_fix": fix,
                               "heavy_atoms": ha, "file_bin": hbin, "source": where,
                               "bin_match": "" if hbin is None else int(ha == hbin)}
 
@@ -205,6 +218,9 @@ def main(argv=None) -> int:
     for k in ("no_name", "malformed_zinc_id", "unparsable", "duplicate_id", "id_conflict",
               "hash_collision", "duplicate_structure"):
         print(f"  rejected {k:<20} {reasons.get(k, 0):,}")
+    n_fix = sum(1 for r in parents if r["tautomer_fix"])
+    print(f"  imino -> amino tautomer: {n_fix:,} parent(s) (tautomer_fix in parents.tsv)"
+          + ("" if not args.keep_imino else "  [off: --keep-imino]"))
     bins = Counter((r["file_bin"], r["heavy_atoms"]) for r in parents)
     print("\n  file bin   heavy atoms   n")
     for (fb, ha), n in sorted(bins.items(), key=lambda x: (x[0][0] or 0, x[0][1])):

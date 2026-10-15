@@ -295,6 +295,53 @@ def read_smi(path: Path, delim: str | None = None) -> list[tuple[str, str]]:
 _UNCHARGER = rdMolStandardize.Uncharger()
 
 
+# An unsubstituted exocyclic imine on a ring carbon: N=c1[nH]... , the imino
+# tautomer of a 2-/4-amino azine or azole (aminopyridine, aminothiazole,
+# aminooxazole, aminotriazole). ZINC writes some parents this way. In water the
+# amino form dominates for these (Angyal & Angyal, J. Chem. Soc. 1952, 1461;
+# Angyal & Werner, ibid. 1952, 2911), the measured base pKa is the amino form's
+# ring N (2-aminopyridine 6.86, 2-aminothiazole 5.39; Williams pp. 27, 28), and
+# the =NH bond crashes RDKit 2024.03.5's stereo enumeration (Range Error idx2),
+# so db2_converter skips every protomer built on it (247 names on the 10k).
+_RING_IMINE = Chem.MolFromSmarts("[NX2H1;!R]=[#6;R]")
+
+
+def amino_tautomer(mol: Chem.Mol) -> Chem.Mol | None:
+    """The amino tautomer of a ring imino tautomer, or None when there is none
+    to move to (no ring N-H in conjugation, e.g. an N-alkyl iminopyridine).
+
+    Only the proton moves: the chosen tautomer differs from `mol` in H count on
+    nitrogen atoms alone, the exocyclic =NH among them, and stereo elsewhere in
+    the molecule is kept.
+    """
+    if not mol.HasSubstructMatch(_RING_IMINE):
+        return None
+    params = rdMolStandardize.CleanupParameters()
+    params.tautomerRemoveSp3Stereo = False
+    params.tautomerRemoveBondStereo = False
+    params.tautomerRemoveIsotopicHs = False
+    enum = rdMolStandardize.TautomerEnumerator(params)
+    exo = {m[0] for m in mol.GetSubstructMatches(_RING_IMINE)}
+    h0 = [a.GetTotalNumHs() for a in mol.GetAtoms()]
+    best = None
+    for t in enum.Enumerate(mol):
+        if t.HasSubstructMatch(_RING_IMINE):
+            continue
+        changed = [i for i, a in enumerate(t.GetAtoms()) if a.GetTotalNumHs() != h0[i]]
+        if not changed or not exo & set(changed):
+            continue
+        if any(t.GetAtomWithIdx(i).GetAtomicNum() != 7 for i in changed):
+            continue
+        key = (len(changed), -enum.ScoreTautomer(t), Chem.MolToSmiles(t))
+        if best is None or key < best[0]:
+            best = (key, t)
+    if best is None:
+        return None
+    out = Chem.Mol(best[1])
+    Chem.AssignStereochemistry(out, cleanIt=True, force=True)
+    return out
+
+
 def standardize(smi: str, neutralize: bool = True, largest_fragment: bool = True):
     """Clean an input SMILES.  QupKake expects neutral, single-fragment input."""
     mol = Chem.MolFromSmiles(smi)
