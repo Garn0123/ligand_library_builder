@@ -38,6 +38,16 @@ Also filtered, in BOTH paths (`qupkake_protomers.IMPLAUSIBLE_SITES`,
   so the all-QupKake library had an amide ANION as the dominant state at
   pH 7.4 in 22 of 50 parents; all 5 "settled but disagree" parents were this.
   Imide N-H and N-sulfonyl N-H are kept (genuinely acidic);
+- the amino N's of an amidine or guanidine as bases (`amidine_amino_n_base`,
+  site filter v5). One proton per group, on the =N, charge shared: guanidine
+  13.71, acetamidine 12.52, benzamidine 11.6, phenylguanidine 10.88, one pKa
+  each; biguanide 13.25 then 3.07 (Williams p. 29). QupKake gave each amino N
+  its own site at 10.7-11.1 beside the =N, building +2/+3 guanidines (and the
+  =NH protomers that crash RDKit's stereo enumeration). If the =N got no
+  site, the best amino-N site moves onto it (`filter_sites`), so the
+  protonation is never lost; triage `sites.tsv` marks it
+  `moved_from_amidine_amino_n`. Aromatic C is not matched (2-aminopyridine:
+  the ring N is the base);
 - carbon as an acid (`carbon_acid`, site filter v4), except a CH between two
   ketone/aldehyde carbonyls or a CH carrying a nitro group. MolGpKa put
   malonic acid's CH2 at 7.5 and built a [CH-] trianion.

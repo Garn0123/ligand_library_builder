@@ -68,7 +68,7 @@ from molgpka import MolGpKa  # noqa: E402
 from prepare_parents import write_shards  # noqa: E402
 from qupkake_protomers import (COUPLING_VERSION, PROTOMER_COLUMNS,  # noqa: E402
                                SITE_FILTER_VERSION,
-                               Site, build_protomers, implausible_sites, make_name,
+                               Site, build_protomers, filter_sites, make_name,
                                protomer_row, unchanged_protomers)
 
 TRIAGE_COLUMNS = ["site_source", "route"]
@@ -134,13 +134,21 @@ def triage_shard(rows: list[tuple[str, str]], model: MolGpKa, args):
                               "reason": "molgpka_failed", "n_sites": 0,
                               "note": f"{type(e).__name__}: {e}"[:200]})
             continue
-        bad = {} if args.keep_amide_sites else implausible_sites(ref)
-        sites, dropped = [], []
+        found = [Site(idx=s.idx, kind=s.kind, pka=s.pka) for s in found]
+        if args.keep_amide_sites:
+            sites, dropped_r = list(found), []
+        else:
+            sites, dropped_r = filter_sites(ref, found)
+        dropped = [d for d, _ in dropped_r]
+        why = {(d.idx, d.kind): r for d, r in dropped_r}
         for s in found:
-            keep = (s.idx, s.kind) not in bad
-            (sites if keep else dropped).append(Site(idx=s.idx, kind=s.kind, pka=s.pka))
-            site_rows.append((pid, s.idx, s.kind, f"{s.pka:.3f}", int(keep),
-                              bad.get((s.idx, s.kind), "")))
+            r = why.get((s.idx, s.kind), "")
+            site_rows.append((pid, s.idx, s.kind, f"{s.pka:.3f}", int(not r), r))
+        orig = {(s.idx, s.kind) for s in found}
+        for s in sites:                  # moved onto an amidine/guanidine =N
+            if (s.idx, s.kind) not in orig:
+                site_rows.append((pid, s.idx, s.kind, f"{s.pka:.3f}", 1,
+                                  "moved_from_amidine_amino_n"))
         isomers = [mol]                              # --stereo carry, as the array runs
 
         if not sites:

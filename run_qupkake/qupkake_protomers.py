@@ -130,6 +130,17 @@ IMPLAUSIBLE_SITES = {
     # activated CH (ethyl acetoacetate 10.68, diethyl malonate 13.3,
     # malononitrile 11.81) and everything less activated are dropped. MolGpKa
     # put malonic acid's CH2 near pH 7 and built a [CH-] trianion.
+    # The amino N's of an amidine or guanidine. These take ONE proton, on the
+    # imine N, with the charge shared over all of them: guanidine 13.71,
+    # acetamidine 12.52, benzamidine 11.6, phenylguanidine 10.88, one pKa each
+    # (Williams compilation p. 29). QupKake gave each amino N its own basic
+    # site (10.7-11.1) beside the =N (11.5-11.8), which built +2/+3 guanidines
+    # on the drug-like 10k; biguanide shows how far a second proton on one
+    # conjugated system sits (13.25, then 3.07). Aromatic C (2-aminopyridine
+    # etc.) is not matched: there the ring N is the base. A dropped site moves
+    # to the =N when the predictor gave the =N none (filter_sites).
+    ("basic", "amidine_amino_n_base"): Chem.MolFromSmarts(
+        "[#7;!a;$([#7]-[#6;!a]=[#7;!a])]"),
     ("acidic", "carbon_acid"): Chem.MolFromSmarts(
         "[#6;!$([#6X4]-[#7+](=O)[#8-]);!$([#6X4]-[#7](=O)=O);"
         "!$([#6X4](-[CX3;$(C=O);!$(C(=O)-[#7,#8,#16])])-[CX3;$(C=O);!$(C(=O)-[#7,#8,#16])])]"),
@@ -138,9 +149,10 @@ IMPLAUSIBLE_SITES = {
 
 # Bumped whenever IMPLAUSIBLE_SITES changes, and written into every output
 # that depends on it, so runs filtered by different rules are never mixed.
-SITE_FILTER_VERSION = 4          # 1: amide rules (2026-10-08); 2: + amine_nh_acid;
+SITE_FILTER_VERSION = 5          # 1: amide rules (2026-10-08); 2: + amine_nh_acid;
                                  # 3: + oxygen_base, alcohol_oh_acid (2026-10-14)
                                  # 4: + carbon_acid (2026-10-15)
+                                 # 5: + amidine_amino_n_base (2026-10-16)
 
 
 def implausible_sites(mol: Chem.Mol) -> dict[tuple[int, str], str]:
@@ -150,6 +162,40 @@ def implausible_sites(mol: Chem.Mol) -> dict[tuple[int, str], str]:
         for m in mol.GetSubstructMatches(patt):
             out[(m[0], kind)] = reason
     return out
+
+
+_AMIDINE_IMINE = Chem.MolFromSmarts("[#7;!a]-[#6;!a]=[#7;!a]")
+
+
+def filter_sites(mol: Chem.Mol, sites: list, bad: dict | None = None):
+    """-> (kept sites, [(dropped site, reason)]) under IMPLAUSIBLE_SITES.
+
+    The one rule that moves rather than drops: basic sites on an amidine or
+    guanidine amino N. If the =N of that group has no basic site of its own, the
+    highest-pKa amino-N site moves onto it (the predictor's estimate for
+    protonating the group, put on the atom that takes the proton); the rest are
+    dropped. `bad` = implausible_sites(mol), if already computed.
+    """
+    bad = implausible_sites(mol) if bad is None else bad
+    kept, dropped, moved = [], [], {}
+    for s in sites:
+        reason = bad.get((s.idx, s.kind))
+        if reason is None:
+            kept.append(s)
+            continue
+        dropped.append((s, reason))
+        if reason == "amidine_amino_n_base":
+            for m in mol.GetSubstructMatches(_AMIDINE_IMINE):
+                if m[0] == s.idx:
+                    moved.setdefault(m[2], []).append(s)
+    have = {s.idx for s in kept if s.kind == "basic"}
+    for imine, group in moved.items():
+        if imine in have:
+            continue
+        best = max(group, key=lambda t: t.pka)
+        kept.append(type(best)(idx=imine, kind="basic", pka=best.pka))
+        have.add(imine)
+    return kept, dropped
 
 
 # --------------------------------------------------------------------------
@@ -1313,10 +1359,8 @@ def main(argv=None):
     dropped_sites = []
     if not args.keep_amide_sites:
         for name, (mol, sites) in grouped.items():
-            bad = implausible_sites(mol)
-            keep = [s for s in sites if (s.idx, s.kind) not in bad]
-            dropped_sites += [(name, s.idx, s.kind, s.pka, bad[(s.idx, s.kind)])
-                              for s in sites if (s.idx, s.kind) in bad]
+            keep, dropped = filter_sites(mol, sites)
+            dropped_sites += [(name, s.idx, s.kind, s.pka, r) for s, r in dropped]
             grouped[name] = (mol, keep)
         if dropped_sites:
             print(f"      dropped {len(dropped_sites)} implausible site(s): "

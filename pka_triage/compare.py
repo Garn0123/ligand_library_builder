@@ -46,7 +46,7 @@ from rdkit import Chem, RDLogger  # noqa: E402
 from rdkit.Chem.MolStandardize import rdMolStandardize  # noqa: E402
 
 from qupkake_protomers import (Coupling, Site, dominant_sites,  # noqa: E402
-                               implausible_sites, parse_qupkake_sdf)
+                               filter_sites, parse_qupkake_sdf)
 
 RDLogger.DisableLog("rdApp.*")
 
@@ -199,8 +199,7 @@ def main(argv=None) -> int:
             raw = [Site(mp[s.idx], s.kind, s.pka) for s in sites if s.idx in mp]
             qk_raw[pid] = raw
             # the QupKake path drops these before building states; so does this
-            bad = {} if args.raw else implausible_sites(parent_mol[pid])
-            qk_sites[pid] = [s for s in raw if (s.idx, s.kind) not in bad]
+            qk_sites[pid] = raw if args.raw else filter_sites(parent_mol[pid], raw)[0]
     # QupKake finished on a parent but listed no site: a genuine "no sites"
     for pid in qk_seen - set(qk_sites) - qk_failed:
         qk_sites[pid] = []
