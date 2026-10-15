@@ -43,7 +43,9 @@ import gzip
 import os
 import re
 import sys
+import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 # NAMING_CONTRACT.md: 'C' + 12 base id + protomer + stereo + 'C'
@@ -116,6 +118,8 @@ def main(argv=None) -> int:
     ap.add_argument("--deep", action="store_true",
                     help="search --outputpath recursively (slow on NFS; default: it "
                          "and its immediate subdirectories, where build_ligand writes)")
+    ap.add_argument("--threads", type=int, default=32,
+                    help="parallel db2 reads (I/O-bound; NFS latency, not CPU)")
     ap.add_argument("--charge-tol", type=float, default=0.05,
                     help="tolerance when comparing AMSOL charge to formal charge")
     ap.add_argument("-o", "--report", default="db2_verification.csv")
@@ -155,10 +159,28 @@ def main(argv=None) -> int:
             if len(parts) >= 4:
                 fail_reasons[parts[1]] = parts[3]
 
+    # Every db2's size and M lines, read up front with a thread pool: each read
+    # is a few NFS round trips, and one at a time ran ~0.5 s per name on Turbo
+    # (2026-10-16). The work is waiting, not computing, so threads hide it.
+    def probe(f: Path):
+        try:
+            size = f.stat().st_size
+            return f, size, (read_db2_header(f) if size else {})
+        except (OSError, EOFError) as e:
+            return f, None, {"error": f"{type(e).__name__}: {e}"}
+    probed: dict[Path, tuple] = {}
+    t0 = time.time()
+    with ThreadPoolExecutor(max_workers=args.threads) as pool:
+        for k, (f, size, hdr) in enumerate(pool.map(probe, all_db2), 1):
+            probed[f] = (size, hdr)
+            if k % 5000 == 0:
+                print(f"  read {k:,} of {len(all_db2):,} db2 headers "
+                      f"({time.time() - t0:.0f} s)", flush=True)
+    print(f"  read {len(all_db2):,} db2 headers in {time.time() - t0:.0f} s "
+          f"({args.threads} threads)", flush=True)
+
     rows, tally = [], Counter()
-    for k, exp in enumerate(expected, 1):
-        if k % 5000 == 0:
-            print(f"  checked {k:,} of {len(expected):,}", flush=True)
+    for exp in expected:
         name = exp["protomer_name"]
         want_q = int(exp["net_charge"])
 
@@ -183,11 +205,14 @@ def main(argv=None) -> int:
             continue
 
         for h in hits:
-            if h.stat().st_size == 0:
+            size, hdr = probed[h]
+            if size is None:
+                tally["unreadable"] += 1
+                status, detail = "UNREADABLE", hdr["error"]
+            elif size == 0:
                 tally["empty"] += 1
                 status, detail, hdr = "EMPTY", "zero-length db2", {}
             else:
-                hdr = read_db2_header(h)
                 q = hdr.get("total_charge")
                 if q is None:
                     tally["unreadable"] += 1
