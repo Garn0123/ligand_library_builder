@@ -273,7 +273,7 @@ def main(argv=None) -> int:
     # ---- closure + naming ----------------------------------------------------
     library: list[dict] = []
     owner: dict[str, str] = {}                        # final SMILES -> name that holds it
-    closure_added = embed_dropped = 0
+    closure_added = embed_dropped = embed_kept_all = 0
     for pid in sorted(rows_by_parent):
         by_state: dict[int, list[dict]] = defaultdict(list)
         for r in rows_by_parent[pid]:
@@ -301,12 +301,17 @@ def main(argv=None) -> int:
                 continue
             if not args.no_embed_check:
                 impossible = [s for s in isomers if not embeddable(s)]
-                for s in impossible:
-                    dropped.append((pid, str(p_old), "stereo_cannot_embed", s))
-                embed_dropped += len(impossible)
-                isomers = [s for s in isomers if s not in impossible]
-                if not isomers:
-                    continue
+                if impossible and len(impossible) == len(isomers):
+                    # never a protomer's last isomer: RDKit cannot embed some
+                    # real strained systems at any effort (bicyclo[1.1.1]pentanes,
+                    # fused cyclopropanes; 100 parents v1 built were lost this
+                    # way, 2026-10-16), so db2_converter decides instead
+                    embed_kept_all += 1
+                else:
+                    for s in impossible:
+                        dropped.append((pid, str(p_old), "stereo_cannot_embed", s))
+                    embed_dropped += len(impossible)
+                    isomers = [s for s in isomers if s not in impossible]
             taken = [s for s in isomers if s in owner]
             for s in taken:
                 dropped.append((pid, str(p_old), "duplicate_structure",
@@ -392,6 +397,7 @@ def main(argv=None) -> int:
         "protomers": len({(r["parent_id"], r["protomer_index"]) for r in library}),
         "stereo_closure_added": closure_added,
         "stereo_cannot_embed": embed_dropped,
+        "protomers_none_embed_kept": embed_kept_all,
         "n_h_invertomers": sum(1 for r in library if r["invertomer_of"]),
         "dropped": dict(reasons),
         "net_charge": dict(sorted(Counter(r["net_charge"] for r in library).items())),
@@ -407,6 +413,8 @@ def main(argv=None) -> int:
     if not args.no_embed_check:
         print(f"  {embed_dropped:,} stereoisomer(s) dropped: no 3D structure exists "
               f"(cage/bridged configurations; dropped.tsv stereo_cannot_embed)")
+        print(f"  {embed_kept_all:,} protomer(s) where no isomer embedded were kept whole "
+              f"(strained systems RDKit can't build; db2_converter decides)")
     print(f"  of which {stats['n_h_invertomers']:,} are N-H+ invertomers of another row "
           f"(library.tsv: invertomer_of) -- one species in solution; collapse downstream")
     for k, v in sorted(reasons.items()):
