@@ -5,34 +5,40 @@ file the next one checks, so a failure stops at the step that caused it rather
 than surfacing as a wrong row in the matrix.
 
 ```
-mol_download/run.sh + sample_2d  ZINC22 2D on disk, uniform N/bin     samples/H*.smi
-run_qupkake/prepare_parents.py   validate ids, neutralize, dedupe      parents/shards/*.smi
-run_qupkake/slurm/qupkake_array  QupKake + protomers, one task/shard   protomers/shard_*/
-run_qupkake/assign_names.py      union -> stereo closure -> names      library/library.smi
-stage4/validate_names.py (DRAP)  the naming contract, on the union      gate
-run_qupkake/check_db2_stereo.py  db2_converter will not rename         gate (db2_converter env)
-build_ligand                     conformers -> db2                     (existing)
-run_qupkake/verify_db2_build.py  names + charges survived into db2     gate
-mol_compiler/parallel            db2 -> balanced chunks + manifest     docking input
+llb fetch + llb sample     ZINC22 2D on disk, uniform N/bin          samples/H*.smi
+llb parents                validate ids, neutralize, dedupe          parents/shards/*.smi
+llb submit-qupkake         QupKake + protomers, one task/shard       protomers/shard_*/
+llb names                  union -> stereo closure -> names          library/library.smi
+llb validate-names         the naming contract (DRAP's checker)      gate
+llb check-stereo           db2_converter will not rename             gate (db2_converter env)
+llb submit-db2             conformers -> db2 (build_ligand array)    db2_run/out/
+llb verify-db2             names + charges survived into db2         gate
+llb chunk                  db2 -> balanced chunks + manifest         docking input
 ```
+
+(On branch `feat/pka-triage`, `llb triage` + `llb merge` sit around the QupKake
+step and send it only the molecules MolGpKa can't settle; see
+`pka_triage/TRIAGE.md`.)
 
 ## 0. Point the repo at your software (once per machine)
 
 ```bash
-cp config/hpc.env.example config/hpc.env      # gitignored; edit it
+mkdir -p ~/.config/llb && cp <checkout>/config/hpc.env.example ~/.config/llb/hpc.env   # edit it
+export LLB_CONFIG=~/.config/llb/hpc.env                                      # ~/.bashrc
 ```
 
-Every step reads tool locations from `config/hpc.env`: conda env name or
+(`config/hpc.env` inside the checkout also works and is gitignored, but a
+config outside it survives a fresh clone.)
+
+Every step reads tool locations from that file: conda env name or
 prefix, an optional executable path, and an optional setup hook run *before*
 activation (`module purge`, `module load ...`, `source ~/env/bcl.sh`). No
-script hard-codes a path. Run a step in a tool's environment with:
+script hard-codes a path. `llb env TOOL CMD` runs any command in a tool's
+environment (TOOL = PREP, QUPKAKE, PKA, DB2C or DOCK), e.g.
+`llb env DB2C which build_ligand`. `DRAP_DIR` points `llb validate-names` at
+the DRAP checkout.
 
-```bash
-common/with_env.sh PREP  python run_qupkake/prepare_parents.py ...   # RDKit steps
-common/with_env.sh DB2C  python run_qupkake/check_db2_stereo.py ...  # db2_converter env
-```
-
-All commands below run from the repo root.
+All commands below run from a run directory, with `llb` on `PATH` (next).
 
 ### Code in one place, runs anywhere
 
@@ -58,12 +64,13 @@ commit, uncommitted changes and config in `provenance.<jobid>.txt`.
 | sample | `llb sample` | `mol_download/sample_2d.py` |
 | parents | `llb parents` | `run_qupkake/prepare_parents.py` |
 | QupKake | `llb qupkake`, `llb submit-qupkake` | `qupkake_protomers.py`, `submit_qupkake.sh` |
-| names | `llb names`, `llb check-stereo` | `assign_names.py`, `check_db2_stereo.py` |
+| names | `llb names`, `llb validate-names`, `llb check-stereo` | `assign_names.py`, DRAP's `stage4/validate_names.py`, `check_db2_stereo.py` |
 | db2 build | `llb submit-db2`, `llb verify-db2` | `submit_db2.sh` + `slurm/db2_array.sbatch`, `verify_db2_build.py` |
 | mol2 | `llb mol2` | `db2_to_mol2.py` |
 | chunk | `llb chunk` | `mol_compiler/parallel/submit_chunks.sh` → `submit.slurm` |
 
-The commands below show the scripts by path; `llb <step>` is the same thing.
+The scripts are listed for reading; run them through `llb`, which picks the
+environment and keeps outputs out of the checkout.
 
 ## 1. Download and sample
 
@@ -74,19 +81,28 @@ more near-neighbours (NN Tanimoto 0.469 vs 0.432) than a uniform draw. Numbers a
 in `sample_2d.py`'s docstring.
 
 ```bash
-python3 mol_download/sample_2d.py --heavy 14-28 --print-urls > urls_2d.txt  # 904 files, ~960 GB
+llb print-urls --heavy 14-28 > urls_2d.txt  # 904 files, ~960 GB
 # or, from a script CartBlanche22 gave you (curl/wget/PowerShell; don't run it as-is):
-#   mol_download/extract_urls.sh zinc22-2D-download.curl > urls_2d.txt
+#   llb extract-urls zinc22-2D-download.curl > urls_2d.txt
 cd $ZINC_DATA                                     # scratch; files land under $PWD/zinc22/
-$LLB/mol_download/run.sh $LLB/urls_2d.txt 4       # DTN / tmux, ~5-19 h
-$LLB/mol_download/verify.sh --purge
-$LLB/mol_download/status.sh $LLB/urls_2d.txt      # re-run run.sh retry.txt 2 until retry = 0
-cd $LLB
-python3 mol_download/sample_2d.py --heavy 14-28 --local $ZINC_DATA/zinc22 \
-    --urls urls_2d.txt --outdir samples
+llb fetch $OLDPWD/urls_2d.txt 4                   # DTN / tmux, ~5-19 h
+llb fetch-verify --purge
+llb fetch-status $OLDPWD/urls_2d.txt              # then llb fetch retry.txt 2 until retry = 0
+llb tranche-pattern permanent.tsv                 # are the remaining 404s real absences?
+cd -                                              # back to the run directory
+llb sample --heavy 14-28 --local $ZINC_DATA/zinc22 --urls urls_2d.txt --outdir samples
 ```
 
-(`$LLB` = this repo. `run.sh` takes `WGET` and `PARALLEL` from the config.)
+(`llb fetch` takes `WGET` and `PARALLEL` from the config.)
+
+**Proportional to bin size:** `--total N` in place of `--per-bin` draws N
+molecules uniformly over all the bins together, so each bin's share matches its
+share of ZINC's molecules (one pass; still one `Hxx.smi` per bin, plus
+`POOLED.done` with each bin's population and count):
+
+```bash
+llb sample --heavy 18-22 --total 10000 --local $ZINC_DATA/zinc22 --urls urls_2d.txt --outdir samples
+```
 
 `--local` is one reservoir pass over every file in the bin: every molecule
 equally likely, the logP mix right by construction, about 30 min for H28. With
@@ -98,8 +114,7 @@ prove the plumbing end to end, never for results.
 ## 2. Parents
 
 ```bash
-common/with_env.sh PREP python run_qupkake/prepare_parents.py samples/H*.smi \
-    -o parents --shard-size 50
+llb parents samples/H*.smi -o parents --shard-size 50
 ```
 
 Neutralizes with the same `standardize` QupKake's wrapper uses, and dedupes by
@@ -110,7 +125,7 @@ bins first.
 plain or gzipped, any names:
 
 ```bash
-common/with_env.sh PREP python run_qupkake/prepare_parents.py my_ligands.smi.gz -o parents
+llb parents my_ligands.smi.gz -o parents
 ```
 
 Names are handled automatically by their shape (`run_qupkake/llb_ids.py`):
@@ -185,12 +200,22 @@ clean one. `qupkake_protomers.py` now audits QupKake's working tree
 (`processed/*.pt`, `raw/` vs `output/` sites), excludes failures, and records
 them in `qupkake_failed.tsv`.
 
+**Amide sites.** QupKake predicts amide-type N-H (amides, anilides, ureas,
+carbamates) as acids at pKa 2-7 -- really ~13-17 -- which would make amide
+anions dominant at pH 7.4. `qupkake_protomers.py` drops those sites (and amide
+N as a base) before building states; see `dropped_sites.tsv` per shard and
+`--keep-amide-sites`. A QupKake run enumerated before this filter (2026-10-08)
+is rebuilt from its SDFs, without rerunning xtb:
+
+```bash
+llb reenumerate parents protomers protomers_fixed
+```
+
 ## 4. Names
 
 ```bash
-common/with_env.sh PREP python run_qupkake/assign_names.py \
-    --shards-dir protomers --parents parents -o library
-python3 $DRAP/stage4/validate_names.py --smi library/library.smi    # DRAP repo
+llb names --shards-dir protomers --parents parents -o library
+llb validate-names --smi library/library.smi      # DRAP's checker, via DRAP_DIR
 ```
 
 Refuses to run until every shard is `DONE`. Uniqueness is over the whole library,
@@ -224,9 +249,18 @@ llb verify-db2 library/library.tsv --outputpath db2_run/out
 ```
 
 Defaults follow the db2_converter notebook (2026-08-27): `-m conformator`,
-`-n 600 --keep_max_conf --checkstereo --reseth --rotateh --dock38`, MMFF off,
-round-robin shards. `--method`, `--nconf`, `--mmff on`, `--ncpus`, `--nshards`,
-`--mem-per-cpu` and `--time` override them. Each array task runs `NCPUS` builds on
+`-n 600 --keep_max_conf --checkstereo --reseth --rotateh --dock38`, round-robin
+shards. One change since: `--mmff restrained` is the default. Conformator left
+some of Owen's molecules unrelaxed (an N-H 1.15 A from a C-H in every
+conformer); db2_converter's own `--MMFFopt` fixes that but folds charged
+molecules in vacuum (N+...O- contacts x3). `restrained` runs build_ligand through
+`run_qupkake/build_ligand_relaxed.py`, which swaps in epsilon = 4r and 0.3 A
+flat-bottom heavy-atom restraints: on 2,735 conformers it cleared 2,008 of 2,011
+clashes and moved heavy atoms 0.27 A. Compare variants on your own conformers
+with `llb mmff-test conformer.NAME.fixed.mol2`. `--mmff on` / `off` give
+db2_converter's plain MMFF / none. `--method`, `--nconf`, `--mmff`, `--ncpus`,
+`--nshards`, `--mem-per-cpu` and `--time` override the defaults. For one molecule
+by hand, `llb build-ligand` runs the same launcher (and accepts a relative `-i`). Each array task runs `NCPUS` builds on
 node-local scratch, rsyncs back every 15 minutes, and refuses to start if
 singularity, build_ligand, RDKit or AMSOL's libraries are missing.
 
@@ -260,11 +294,25 @@ reader and mol2 writer), so it is consistent with the db2 by construction:
 | title | the 16-character contract name | same |
 
 ```bash
-common/with_env.sh DOCK python3 run_qupkake/db2_to_mol2.py $d \
-    --library library/library.tsv -o library/library.mol2
+llb mol2 db2_run/out --library library/library.tsv -o library/library.mol2
 ```
 
-`db2tool` comes from `DB2TOOL_EXE` / `DOCK_SETUP` in `config/hpc.env`. Over plain
+`db2tool` comes from `DB2TOOL_EXE` / `DOCK_SETUP` in your `hpc.env`.
+
+The library as DOCK-format multi-mol2 shards (one conformer per molecule,
+DOCK's header block with name, molecular weight, formal charge, H-bond
+acceptors/donors and heavy atoms computed DOCK's way, plus LLB_ lines with the
+SMILES, parent, input name, protomer, pH and RDKit descriptors):
+
+**Broken sets.** In the db2 (db2_converter 63d6656, mol2db2/clash.py) a set is
+flagged broken by one rule only: a rotatable hydrogen (OH/NH turned by
+`--rotateh`) within 1.70 A of another hydrogen more than two bonds away. DOCK6
+samples broken sets unless `skip_broken yes` (default `no`, conf_gen_hdb.cpp);
+`llb env DOCK db2tool audit` counts all_broken / some_broken per molecule.
+
+```bash
+llb mol2-library library/library.mol2 --library library/library.tsv -o mol2_lib --shard-size 1000
+``` Over plain
 `tomol2`, the wrapper adds three things:
 
 - **One conformer per molecule.** db2_converter writes one db2 record per rigid
@@ -287,7 +335,7 @@ llb chunk . db2_run/out --target-per-bin 50000 --shards 200
 
 Writes `work/` (intermediates, logs) and `chunks/` (`chunk_NNNNN.db2.gz` +
 `manifest.tsv`) into the run directory, with account and partition from
-`config/hpc.env`. `chunks.env` records the input and the code commit, and a
+your `hpc.env`. `chunks.env` records the input and the code commit, and a
 different input into the same run directory is refused.
 `parallel/submit.slurm` still works standalone. Every setting is now an
 environment override (`INPUT_DIR=… RUNDIR=… bash parallel/submit.slurm`), so

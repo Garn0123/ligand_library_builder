@@ -19,6 +19,11 @@ What it does, in order:
   2. Standardize with qupkake_protomers.standardize (imported, not copied, so
                  the dedupe key is exactly the structure QupKake will see):
                  largest fragment, cleanup, neutralize.
+  2b. Tautomer. An imino tautomer (N=c1[nH]..., RO-C(=NH)OH, ...) gets
+                 its proton moved to the amino form (qupkake_protomers.amino_tautomer):
+                 the dominant form in water, the one both pKa predictors should
+                 see, and the =NH crashes RDKit's stereo enumeration in the db2
+                 build. Recorded in parents.tsv tautomer_fix; --keep-imino skips it.
   3. Dedupe.     Same id twice -> keep the first; if the two SMILES disagree that
                  is recorded as an id_conflict. Same neutral structure under two
                  ids -> keep a ZINC id over a hashed one, then the smallest. Two ids for one structure would
@@ -56,7 +61,7 @@ from pathlib import Path
 from rdkit import Chem
 
 from llb_ids import base_id_of, is_zinc, parent_id
-from qupkake_protomers import standardize
+from qupkake_protomers import amino_tautomer, standardize
 
 # Only a sampler-style name (H17.smi, H17.smi.gz) declares a bin; a bare search
 # would read "H12" out of CHEMBL_H12.smi.
@@ -74,6 +79,44 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def write_shards(outdir: Path, parents: list[dict], shard_size: int, seed: int,
+                 preflight: int) -> tuple[list, list]:
+    """Shuffle, cut into shards, write shards.tsv (+ .meta) and preflight.smi.
+
+    Shared with pka_triage/triage.py, which writes the parents it routes to
+    QupKake as a parents directory of the same shape.
+    """
+    (outdir / "shards").mkdir(parents=True, exist_ok=True)
+    order = list(parents)
+    random.Random(seed).shuffle(order)
+    shards = [order[i:i + shard_size] for i in range(0, len(order), shard_size)]
+    rows = []
+    for i, shard in enumerate(shards):
+        p = outdir / "shards" / f"shard_{i:05d}.smi"
+        p.write_text("".join(f"{r['smiles']} {r['parent_id']}\n" for r in shard))
+        rows.append((i, p.relative_to(outdir), len(shard), sha256(p)))
+    with open(outdir / "shards.tsv", "w") as fh:
+        fh.write("index\tpath\tn_parents\tsha256\n")
+        fh.writelines(f"{i}\t{p}\t{n}\t{h}\n" for i, p, n, h in rows)
+    (outdir / "shards.tsv.meta").write_text(
+        f"checksum={sha256(outdir / 'shards.tsv')}\nn_shards={len(rows)}\n"
+        f"shard_size={shard_size}\nseed={seed}\nn_parents={len(parents)}\n")
+
+    # Preflight set: round-robin across bins so the largest molecules -- the
+    # slowest for xtb and the likeliest to fail -- are in the timing run.
+    per_bin = defaultdict(list)
+    for r in order:
+        per_bin[int(r["heavy_atoms"])].append(r)
+    pre, bins = [], sorted(per_bin, reverse=True)
+    while len(pre) < min(preflight, len(order)):
+        for b in bins:
+            if per_bin[b] and len(pre) < preflight:
+                pre.append(per_bin[b].pop())
+    (outdir / "preflight.smi").write_text(
+        "".join(f"{r['smiles']} {r['parent_id']}\n" for r in pre))
+    return rows, pre
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -84,6 +127,9 @@ def main(argv=None) -> int:
                     help="parents per QupKake array task; each task is ONE core, so "
                          "size from the timing preflight (s/molecule x shard size)")
     ap.add_argument("--seed", type=int, default=20260923)
+    ap.add_argument("--keep-imino", action="store_true",
+                    help="keep ring imino tautomers (N=c1[nH]...) as given instead of "
+                         "moving the proton to the amino form (step 2b)")
     ap.add_argument("--preflight", type=int, default=20,
                     help="parents, spread across bins, written to preflight.smi")
     args = ap.parse_args(argv)
@@ -114,6 +160,11 @@ def main(argv=None) -> int:
                 if mol is None:
                     rejected.append((name, "unparsable", smi))
                     continue
+                fix = ""
+                if not args.keep_imino:
+                    amino = amino_tautomer(mol)
+                    if amino is not None:
+                        mol, fix = amino, "imino_to_amino"
                 std = Chem.MolToSmiles(mol)
                 if pid in by_id:
                     prev = by_id[pid]
@@ -130,7 +181,7 @@ def main(argv=None) -> int:
                 by_id[pid] = {"parent_id": pid, "base_id": base_id_of(pid),
                               "input_name": name, "id_kind": kind,
                               "zinc_id": pid if is_zinc(pid) else "",
-                              "smiles": std, "input_smiles": smi,
+                              "smiles": std, "input_smiles": smi, "tautomer_fix": fix,
                               "heavy_atoms": ha, "file_bin": hbin, "source": where,
                               "bin_match": "" if hbin is None else int(ha == hbin)}
 
@@ -148,7 +199,7 @@ def main(argv=None) -> int:
 
     parents = sorted(by_id.values(), key=lambda r: r["parent_id"])
     with open(outdir / "parents.tsv", "w", newline="") as fh:
-        w = csv.DictWriter(fh, delimiter="\t", fieldnames=list(parents[0]) if parents
+        w = csv.DictWriter(fh, lineterminator="\n", delimiter="\t", fieldnames=list(parents[0]) if parents
                            else ["parent_id"])
         w.writeheader()
         w.writerows(parents)
@@ -156,33 +207,7 @@ def main(argv=None) -> int:
         fh.write("input_name\treason\tdetail\n")
         fh.writelines(f"{a}\t{b}\t{c}\n" for a, b, c in rejected)
 
-    order = list(parents)
-    random.Random(args.seed).shuffle(order)
-    shards = [order[i:i + args.shard_size] for i in range(0, len(order), args.shard_size)]
-    rows = []
-    for i, shard in enumerate(shards):
-        p = outdir / "shards" / f"shard_{i:05d}.smi"
-        p.write_text("".join(f"{r['smiles']} {r['parent_id']}\n" for r in shard))
-        rows.append((i, p.relative_to(outdir), len(shard), sha256(p)))
-    with open(outdir / "shards.tsv", "w") as fh:
-        fh.write("index\tpath\tn_parents\tsha256\n")
-        fh.writelines(f"{i}\t{p}\t{n}\t{h}\n" for i, p, n, h in rows)
-    (outdir / "shards.tsv.meta").write_text(
-        f"checksum={sha256(outdir / 'shards.tsv')}\nn_shards={len(rows)}\n"
-        f"shard_size={args.shard_size}\nseed={args.seed}\nn_parents={len(parents)}\n")
-
-    # Preflight set: round-robin across bins so the largest molecules -- the
-    # slowest for xtb and the likeliest to fail -- are in the timing run.
-    per_bin = defaultdict(list)
-    for r in order:
-        per_bin[r["heavy_atoms"]].append(r)
-    pre, bins = [], sorted(per_bin, reverse=True)
-    while len(pre) < min(args.preflight, len(order)):
-        for b in bins:
-            if per_bin[b] and len(pre) < args.preflight:
-                pre.append(per_bin[b].pop())
-    (outdir / "preflight.smi").write_text(
-        "".join(f"{r['smiles']} {r['parent_id']}\n" for r in pre))
+    rows, pre = write_shards(outdir, parents, args.shard_size, args.seed, args.preflight)
 
     # ---- report -----------------------------------------------------------
     reasons = Counter(r for _, r, _ in rejected)
@@ -193,6 +218,9 @@ def main(argv=None) -> int:
     for k in ("no_name", "malformed_zinc_id", "unparsable", "duplicate_id", "id_conflict",
               "hash_collision", "duplicate_structure"):
         print(f"  rejected {k:<20} {reasons.get(k, 0):,}")
+    n_fix = sum(1 for r in parents if r["tautomer_fix"])
+    print(f"  imino -> amino tautomer: {n_fix:,} parent(s) (tautomer_fix in parents.tsv)"
+          + ("" if not args.keep_imino else "  [off: --keep-imino]"))
     bins = Counter((r["file_bin"], r["heavy_atoms"]) for r in parents)
     print("\n  file bin   heavy atoms   n")
     for (fb, ha), n in sorted(bins.items(), key=lambda x: (x[0][0] or 0, x[0][1])):

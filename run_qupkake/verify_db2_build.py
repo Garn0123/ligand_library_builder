@@ -26,8 +26,9 @@ net formal charge you asked for.
 Usage
 -----
     python verify_db2_build.py library/library.tsv --outputpath db2_run/out
-    (or protomers.csv; --outputpath is searched recursively, and every
-    *.faillist under it is read unless --faillist is given)
+    (or protomers.csv; --outputpath and its immediate subdirectories are
+    searched, --deep for the whole tree, and every *.faillist found is read
+    unless --faillist is given)
 
 Exit 1 on a charge mismatch, a renamed or mangled name, or a molecule MISSING
 with no faillist entry -- a silent loss. Molecules build_ligand reported as
@@ -39,9 +40,12 @@ from __future__ import annotations
 import argparse
 import csv
 import gzip
+import os
 import re
 import sys
+import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 # NAMING_CONTRACT.md: 'C' + 12 base id + protomer + stereo + 'C'
@@ -73,23 +77,57 @@ def read_db2_header(path: Path) -> dict:
     return info
 
 
+def scan(outdir: Path, deep: bool) -> tuple[list[Path], list[Path]]:
+    """(*.db2.gz, *.faillist) under outdir.
+
+    build_ligand writes both flat into --outputpath, and a submit_db2.sh run's
+    out/ holds one such directory per shard (out/NNNN/). So by default only
+    outdir and its immediate subdirectories are listed: ~1,000 listings for a
+    1,000-shard run. A recursive walk also descends every molecule's working
+    directory and on NFS took over two hours on 22k names (2026-10-16); it also
+    finds db2_converter's working copies (NAME/db2/output.N.db2.gz), which are
+    not results. --deep restores it.
+    """
+    if deep:
+        return sorted(outdir.rglob("*.db2.gz")), sorted(outdir.rglob("*.faillist"))
+    db2, fails = [], []
+    dirs = [outdir]
+    with os.scandir(outdir) as it:
+        dirs += [Path(e.path) for e in it if e.is_dir(follow_symlinks=False)]
+    for d in dirs:
+        with os.scandir(d) as it:
+            for e in it:
+                if e.name.endswith(".db2.gz") and e.is_file():
+                    db2.append(Path(e.path))
+                elif e.name.endswith(".faillist") and e.is_file():
+                    fails.append(Path(e.path))
+    return sorted(db2), sorted(fails)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("protomers_csv",
                     help="protomers.csv (qupkake_protomers.py) or library.tsv (assign_names.py)")
-    ap.add_argument("--outputpath", required=True,
-                    help="db2_converter --outputpath, or a submit_db2.sh run's out/ "
+    ap.add_argument("--outputpath", required=True, action="append",
+                    help="repeatable: e.g. the main run's out/ and a fallback run's out/ "
+                         "(a name that failed in one and built in another is OK). "
+                         "db2_converter --outputpath, or a submit_db2.sh run's out/ "
                          "(searched recursively)")
     ap.add_argument("--faillist", action="append", default=[],
                     help=".faillist written by build_ligand (repeatable); default: "
                          "every *.faillist under --outputpath")
+    ap.add_argument("--deep", action="store_true",
+                    help="search --outputpath recursively (slow on NFS; default: it "
+                         "and its immediate subdirectories, where build_ligand writes)")
+    ap.add_argument("--threads", type=int, default=32,
+                    help="parallel db2 reads (I/O-bound; NFS latency, not CPU)")
     ap.add_argument("--charge-tol", type=float, default=0.05,
                     help="tolerance when comparing AMSOL charge to formal charge")
     ap.add_argument("-o", "--report", default="db2_verification.csv")
     args = ap.parse_args(argv)
 
-    outdir = Path(args.outputpath)
+    outdirs = [Path(o) for o in args.outputpath]
     # protomers.csv (qupkake_protomers.py) or library.tsv (assign_names.py)
     with open(args.protomers_csv) as fh:
         tsv = args.protomers_csv.endswith(".tsv")
@@ -102,7 +140,13 @@ def main(argv=None) -> int:
     fail_reasons: dict[str, str] = {}
     # One index over the whole tree: a submit_db2.sh run keeps each shard's
     # results in out/NNNN/, and globbing per name would be N directory scans.
-    all_db2 = sorted(outdir.rglob("*.db2.gz"))
+    all_db2, found_faillists = [], []
+    for outdir in outdirs:
+        db2s, fls = scan(outdir, args.deep)
+        all_db2 += db2s
+        found_faillists += fls
+        print(f"  {len(db2s):,} db2 file(s), {len(fls):,} faillist(s) under {outdir}",
+              flush=True)
     exact_index: dict[str, list[Path]] = {}
     split_index: dict[str, list[Path]] = {}
     for f in all_db2:
@@ -112,7 +156,7 @@ def main(argv=None) -> int:
         if m:
             split_index.setdefault(m.group(1), []).append(f)
 
-    faillists = [Path(f) for f in args.faillist] or sorted(outdir.rglob("*.faillist"))
+    faillists = [Path(f) for f in args.faillist] or found_faillists
     for fl in faillists:
         if not fl.exists():
             continue
@@ -120,6 +164,26 @@ def main(argv=None) -> int:
             parts = line.split("\t")
             if len(parts) >= 4:
                 fail_reasons[parts[1]] = parts[3]
+
+    # Every db2's size and M lines, read up front with a thread pool: each read
+    # is a few NFS round trips, and one at a time ran ~0.5 s per name on Turbo
+    # (2026-10-16). The work is waiting, not computing, so threads hide it.
+    def probe(f: Path):
+        try:
+            size = f.stat().st_size
+            return f, size, (read_db2_header(f) if size else {})
+        except (OSError, EOFError) as e:
+            return f, None, {"error": f"{type(e).__name__}: {e}"}
+    probed: dict[Path, tuple] = {}
+    t0 = time.time()
+    with ThreadPoolExecutor(max_workers=args.threads) as pool:
+        for k, (f, size, hdr) in enumerate(pool.map(probe, all_db2), 1):
+            probed[f] = (size, hdr)
+            if k % 5000 == 0:
+                print(f"  read {k:,} of {len(all_db2):,} db2 headers "
+                      f"({time.time() - t0:.0f} s)", flush=True)
+    print(f"  read {len(all_db2):,} db2 headers in {time.time() - t0:.0f} s "
+          f"({args.threads} threads)", flush=True)
 
     rows, tally = [], Counter()
     for exp in expected:
@@ -147,11 +211,14 @@ def main(argv=None) -> int:
             continue
 
         for h in hits:
-            if h.stat().st_size == 0:
+            size, hdr = probed[h]
+            if size is None:
+                tally["unreadable"] += 1
+                status, detail = "UNREADABLE", hdr["error"]
+            elif size == 0:
                 tally["empty"] += 1
                 status, detail, hdr = "EMPTY", "zero-length db2", {}
             else:
-                hdr = read_db2_header(h)
                 q = hdr.get("total_charge")
                 if q is None:
                     tally["unreadable"] += 1
@@ -189,7 +256,7 @@ def main(argv=None) -> int:
                          "db2_file": f.name, "db2_name": "", "amsol_charge": ""})
 
     with open(args.report, "w", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=["protomer_name", "parent",
+        w = csv.DictWriter(fh, lineterminator="\n", fieldnames=["protomer_name", "parent",
                                            "expected_charge", "status", "detail",
                                            "db2_file", "db2_name", "amsol_charge"])
         w.writeheader()

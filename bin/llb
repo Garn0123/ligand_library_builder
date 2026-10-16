@@ -19,19 +19,37 @@
 #   llb extract-urls FILE...  mol_download/extract_urls.sh               (no env)
 #   llb fetch LIST [J]        mol_download/run.sh  (files land under $PWD)
 #   llb fetch-verify [--purge]  /  llb fetch-status LIST
+#   llb tranche-pattern [permanent.tsv]  are the 404s real absences?   (no env)
 #   llb sample ARGS           mol_download/sample_2d.py                  (no env)
 #   llb parents ARGS          run_qupkake/prepare_parents.py             (PREP)
 #   llb qupkake ARGS          run_qupkake/qupkake_protomers.py           (QUPKAKE)
+#   llb molgpka ARGS          pka_triage/molgpka.py  (per-site pKa; --check)  (PKA)
+#   llb triage PARENTS -o T   pka_triage/triage.py  (MolGpKa; routes to QupKake) (PKA)
+#   llb merge ARGS            pka_triage/merge_protomers.py  (before names)   (PREP)
+#   llb compare ARGS          pka_triage/compare.py  (MolGpKa vs QupKake)     (PKA)
+#   llb pka-reference QK_DIR  pka_triage/reference_check.py (aromatic N vs measured) (PKA)
+#   llb collapse-invertomers SCORES --library library.tsv -o OUT   best score per N-H+ invertomer group (PKA)
+#   llb timing DIR...         cost of a run: triage / QupKake / db2 (no env)
 #   llb submit-qupkake PARENTS OUT [sbatch args]                         (logs -> ./logs)
+#   llb reenumerate PARENTS QK_IN QK_OUT  rebuild protomers from QupKake's SDFs (PREP)
 #   llb names ARGS            run_qupkake/assign_names.py                (PREP)
+#   llb validate-names ARGS   DRAP's stage4/validate_names.py, at DRAP_DIR (no env)
 #   llb check-stereo SMI      run_qupkake/check_db2_stereo.py            (DB2C)
 #   llb submit-db2 RUNDIR SMI [opts] [-- sbatch args]                    (run_qupkake/submit_db2.sh)
 #   llb verify-db2 ARGS       run_qupkake/verify_db2_build.py            (DB2C)
+#   llb build-ligand ARGS     db2_converter build_ligand, restrained MMFF  (DB2C)
+#                             (run_qupkake/build_ligand_relaxed.py; one molecule by hand)
 #   llb mol2 ARGS             run_qupkake/db2_to_mol2.py                 (DOCK)
+#   llb clash-report MOL2... [-o TSV]  why db2 sets are flagged broken (no env)
+#   llb mmff-test MOL2|SDF... compare MMFF relaxation variants (collapse vs clashes) (PREP)
+#   llb mol2-library MOL2 --library TSV -o DIR [--shard-size N]
+#                             DOCK-header multi-mol2 shards, run_qupkake/mol2_library.py (PREP)
 #   llb chunk RUNDIR DB2DIR [opts]  mol_compiler/parallel/submit_chunks.sh  (no env)
 #
 # Utilities:
-#   llb env TOOL CMD...       run CMD in TOOL's env (QUPKAKE, DB2C, PREP, DOCK)
+#   llb env TOOL CMD...       run CMD in TOOL's env (QUPKAKE, DB2C, PREP, DOCK, PKA)
+#   llb squeeze               filter stdin: collapse repeated RDKit warnings
+#                             (e.g. llb env DB2C build_ligand ... 2>&1 | llb squeeze)
 #   llb root                  print the code checkout this llb belongs to
 #   llb help                  this text
 
@@ -59,17 +77,40 @@ case "$step" in
     fetch)          exec "$D/run.sh" "$@" ;;
     fetch-verify)   exec "$D/verify.sh" "$@" ;;
     fetch-status)   exec "$D/status.sh" "$@" ;;
+    tranche-pattern) exec "$D/tranche_pattern.sh" "$@" ;;
     sample)         exec python3 "$D/sample_2d.py" "$@" ;;
     parents)        exec "$W" PREP python "$Q/prepare_parents.py" "$@" ;;
     qupkake)        exec "$W" QUPKAKE python "$Q/qupkake_protomers.py" "$@" ;;
+    molgpka)        exec "$W" PKA python "$LLB_ROOT/pka_triage/molgpka.py" "$@" ;;
+    triage)         exec "$W" PKA python "$LLB_ROOT/pka_triage/triage.py" "$@" ;;
+    merge)          exec "$W" PREP python "$LLB_ROOT/pka_triage/merge_protomers.py" "$@" ;;
+    compare)        exec "$W" PKA python "$LLB_ROOT/pka_triage/compare.py" "$@" ;;
+    pka-reference)  exec "$W" PKA python "$LLB_ROOT/pka_triage/reference_check.py" "$@" ;;
+    collapse-invertomers) exec "$W" PKA python "$Q/collapse_invertomers.py" "$@" ;;
+    timing)         exec python3 "$Q/timing_report.py" "$@" ;;
     submit-qupkake) exec "$Q/submit_qupkake.sh" "$@" ;;
+    reenumerate)    exec "$W" PREP python "$Q/reenumerate.py" "$@" ;;
     names)          exec "$W" PREP python "$Q/assign_names.py" "$@" ;;
+    validate-names)
+        # stdlib only, so no env; the DRAP checkout is the one place it lives
+        source "$LLB_ROOT/common/env.sh"; llb_load_config
+        v="${DRAP_DIR:-}/stage4/validate_names.py"
+        [[ -n "${DRAP_DIR:-}" && -f "$v" ]] || {
+            echo "llb validate-names: set DRAP_DIR in $LLB_CONFIG to the DRAP checkout" \
+                 "(the directory holding stage4/validate_names.py); now '${DRAP_DIR:-}'" >&2
+            exit 2; }
+        exec python3 "$v" "$@" ;;
     check-stereo)   exec "$W" DB2C python "$Q/check_db2_stereo.py" "$@" ;;
     submit-db2)     exec "$Q/submit_db2.sh" "$@" ;;
     verify-db2)     exec "$W" DB2C python "$Q/verify_db2_build.py" "$@" ;;
+    build-ligand)   exec "$W" DB2C python "$Q/build_ligand_relaxed.py" "$@" ;;
     mol2)           exec "$W" DOCK python3 "$Q/db2_to_mol2.py" "$@" ;;
+    mol2-library)   exec "$W" PREP python "$Q/mol2_library.py" "$@" ;;
+    clash-report)   exec python3 "$Q/clash_report.py" "$@" ;;
+    mmff-test)      exec "$W" PREP python "$Q/mmff_variants.py" "$@" ;;
     chunk)          exec "$LLB_ROOT/mol_compiler/parallel/submit_chunks.sh" "$@" ;;
     env)            exec "$W" "$@" ;;
+    squeeze)        exec awk -f "$LLB_ROOT/common/squeeze_log.awk" ;;
     root)           echo "$LLB_ROOT" ;;
     help|-h|--help) usage ;;
     *) echo "llb: unknown step '$step'" >&2; usage >&2; exit 64 ;;

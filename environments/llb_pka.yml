@@ -1,0 +1,40 @@
+# llb_pka -- environment for the pKa triage stage (pka_triage/), CPU only.
+#
+# A NEW env on purpose: nothing here is installed into the db2_converter or
+# QupKake envs, so neither one's rdkit/python pins can collide with torch.
+#
+#   mamba env create -p /nfs/turbo/umms-maom/johnbick/opt/envs/llb_pka -f environments/llb_pka.yml
+#   git clone https://github.com/Xundrug/MolGpKa /nfs/turbo/umms-maom/johnbick/opt/MolGpKa
+#   git -C /nfs/turbo/umms-maom/johnbick/opt/MolGpKa checkout 4dc8352
+#
+# then in config/hpc.env:  PKA_ENV=/nfs/turbo/.../envs/llb_pka
+#                          MOLGPKA_DIR=/nfs/turbo/.../opt/MolGpKa
+# and check the port against the original code once:
+#   llb env PKA python $(llb root)/pka_triage/molgpka.py --check some.smi
+#
+# Pins:
+#   rdkit 2024.03.5  same as the db2_converter env, so SMILES canonicalize and
+#                    stereo enumerates identically on both sides of the build
+#   python 3.11      rdkit 2024.03.5 has no 3.13 build (the old collision)
+#   pytorch cpu_*    build string pins the CPU build even when solved on a GPU
+#                    node (conda-forge would otherwise pick a CUDA build there)
+#   pytorch_geometric  ONLY for `molgpka.py --check` (runs upstream MolGpKa);
+#                    the pipeline itself needs plain torch. No torch_scatter.
+#   dimorphite_dl    independent rule-based protomer enumerator, used by the
+#                    validation harness as a third opinion, not for decisions
+# Solved and tested 2026-10-08 (osx-arm64): torch 2.4.1, PyG 2.8.0.post1,
+# rdkit 2024.03.5, numpy 1.26.4, dimorphite_dl 2.1.0.
+name: llb_pka
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - rdkit=2024.03.5
+  - pytorch=2.4.*=cpu*
+  - pytorch_geometric
+  - numpy<2
+  - pandas
+  - matplotlib-base
+  - pip
+  - pip:
+      - dimorphite_dl==2.1.0

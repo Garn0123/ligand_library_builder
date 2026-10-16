@@ -47,6 +47,8 @@ check() {
 check "singularity not on PATH (module purge without reload?)" "command -v singularity"
 check "build_ligand not executable ($BUILD_LIGAND)"             "[[ -x '$BUILD_LIGAND' ]]"
 check "python cannot import rdkit"                             "python -c 'import rdkit'"
+check "build launcher does not import" \
+    "python -c 'import sys; sys.path.insert(0, \"$LLB_ROOT/run_qupkake\"); import build_ligand_relaxed'"
 
 AMSOL=$(python -c "from db2_converter.config import config; print(config['all']['AMSOLEXE'])" 2>/dev/null)
 if [[ -n "$AMSOL" ]]; then
@@ -67,8 +69,18 @@ if (( preflight_fail )); then
 fi
 echo "preflight OK"
 
+# MMFF: off = none; on = db2_converter's own (plain MMFF94, folds charged
+# molecules); restrained = run_qupkake/build_ligand_relaxed.py, which swaps in
+# eps=4r + 0.3 A flat-bottom heavy-atom restraints (measured on Owen's set).
+# Every build goes through the launcher, which also writes one timing row per
+# molecule to out/NNNN/llb_build.tsv (llb timing summarizes them).
 flags=""
-[[ "$MMFF" == "on" ]] && flags="--MMFFopt"
+build_cmd=(python "$LLB_ROOT/run_qupkake/build_ligand_relaxed.py")
+case "$MMFF" in
+    on)         flags="--MMFFopt"; export LLB_MMFF_VARIANT=db2_converter ;;
+    restrained) flags="--MMFFopt" ;;
+    off)        export LLB_MMFF_VARIANT=db2_converter ;;
+esac
 
 # --- provenance --------------------------------------------------------
 # bcl.sh runs `module purge` and reloads, so what the job ran with is not
@@ -91,7 +103,8 @@ envfile="$RUN/logs/env.task$(printf '%03d' "$SLURM_ARRAY_TASK_ID").txt"
     echo "nconf       $NCONF"
     echo "mmffopt     $MMFF"
     echo "flags       $flags"
-    echo "build       $BUILD_LIGAND"
+    echo "build       ${build_cmd[*]}"
+    [[ "$MMFF" == restrained ]] && echo "mmff        ${LLB_MMFF_VARIANT:-eps4r_restrained} max_displ=${LLB_MMFF_MAX_DISPL:-0.3} k=${LLB_MMFF_K:-100}"
 } > "$envfile"
 cat "$envfile"
 
@@ -186,12 +199,17 @@ for k in $(seq 0 $((NCPUS-1))); do
     # outputpath, which is how they're set below.
     rsync -a "$RUN/out/$sid/" "$wd/" 2>/dev/null
 
+    # db2_converter's chemistry check prints one RDKit "Proton(s) added/removed"
+    # warning per conformer; squeeze_log.awk collapses each run into one counted
+    # line. pipefail keeps build_ligand's exit status as the subshell's.
     (
-      ${timer[@]+"${timer[@]}"} "$BUILD_LIGAND" -i "$shard" \
+      set -o pipefail
+      ${timer[@]+"${timer[@]}"} "${build_cmd[@]}" -i "$shard" \
         -n "$NCONF" --keep_max_conf \
         -m "$METHOD" --checkstereo --reseth --rotateh --dock38 \
         $flags \
-        --workingpath "$wd" --outputpath "$wd"
+        --workingpath "$wd" --outputpath "$wd" 2>&1 \
+        | awk -f "$LLB_ROOT/common/squeeze_log.awk"
     ) > "$RUN/logs/shard.$sid.out" 2>&1 &
     pids+=($!)
 done
@@ -202,5 +220,24 @@ for p in "${pids[@]}"; do wait "$p" || rc=1; done
 
 kill "$syncer" 2>/dev/null
 sync_back
+# The periodic sync copies a molecule's working directory (NAME/) while it
+# builds; build_ligand deletes it from scratch when done, but rsync without
+# --delete leaves the copy in out/. Every build has ended here, so remove any
+# out/ subdirectory scratch no longer has.
+# Only directories named like a contract name (C + 14 base62 + C) are touched,
+# and only when RUN and scratch are both set.
+if [[ -n "${RUN:-}" && -n "${scratch:-}" && -d "$RUN/out" ]]; then
+    for k in $(seq 0 $((NCPUS-1))); do
+        s=$(( SLURM_ARRAY_TASK_ID * NCPUS + k ))
+        (( s < NSHARDS )) || continue
+        sid=$(printf "%04d" "$s")
+        for d in "$RUN/out/$sid"/*/; do
+            n="$(basename "$d")"
+            [[ -d "$d" && "$n" =~ ^C[0-9A-Za-z]{14}C$ && ! -d "$scratch/$sid/$n" ]] || continue
+            echo "removing stale working copy $RUN/out/$sid/$n"
+            rm -rf -- "$RUN/out/$sid/$n"
+        done
+    done
+fi
 echo "task done rc=$rc"
 exit $rc

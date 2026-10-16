@@ -29,7 +29,7 @@ source "$LLB_ROOT/common/env.sh"
 llb_load_config
 
 META="$PARENTS_DIR/shards.tsv.meta"
-[[ -f "$META" ]] || { echo "FATAL: $META missing -- run prepare_parents.py first" >&2; exit 2; }
+[[ -f "$META" ]] || { echo "FATAL: $META missing -- run llb parents first (or use a triage/routed directory)" >&2; exit 2; }
 N="$(awk -F= '$1=="n_shards"{print $2}' "$META")"
 [[ "$N" =~ ^[0-9]+$ && "$N" -gt 0 ]] || {
     echo "FATAL: no n_shards in $META; keys present:" >&2; cut -d= -f1 "$META" | sed 's/^/  /' >&2; exit 2; }

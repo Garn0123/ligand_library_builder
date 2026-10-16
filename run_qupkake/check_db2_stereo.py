@@ -24,11 +24,29 @@ Exit 1: lists the lines db2_converter would rename. Do not build.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import re
 import sys
+from pathlib import Path
 
 CONTRACT = re.compile(r"^C[0-9A-Za-z]{14}C$")
+
+
+@contextlib.contextmanager
+def quiet_stderr():
+    """Silence C++ stderr (RDKit prints a full stack trace for every invariant
+    violation, which buried the summary on the 22k-name drug-like library)."""
+    sys.stderr.flush()
+    saved = os.dup(2)
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull, 2)
+        yield
+    finally:
+        os.dup2(saved, 2)
+        os.close(devnull)
+        os.close(saved)
 
 
 def main(argv=None) -> int:
@@ -49,7 +67,7 @@ def main(argv=None) -> int:
                          f"db2_converter env, or pass --db2c-src.")
     from rdkit import Chem, rdBase
 
-    split, unstable, badname, n = [], [], [], 0
+    split, unstable, badname, crashed, n = [], [], [], [], 0
     for line in open(args.smi):
         parts = line.split()
         if not parts:
@@ -58,7 +76,16 @@ def main(argv=None) -> int:
         n += 1
         if not CONTRACT.match(name):
             badname.append(name)
-        isomers = rdk_enumerate_smi(smi)
+        try:
+            with quiet_stderr():
+                isomers = rdk_enumerate_smi(smi)
+        except Exception as e:  # noqa: BLE001
+            # RDKit 2024.03.5 EnumerateStereoisomers can raise "Range Error idx2"
+            # on a double bond with no controlling atom on one end. The build
+            # catches it too (pipeline.write_enumerated_smifile), logs "cannot
+            # be parsed" and leaves the molecule out: no db2, nothing else lost.
+            crashed.append((name, smi, str(e).strip().splitlines()[0][:60]))
+            continue
         # db2_converter's test is len(outsmis) == 1, and it does not dedupe
         if len(isomers) != 1:
             split.append((name, len(isomers), smi))
@@ -76,14 +103,24 @@ def main(argv=None) -> int:
         print(f"  [FAIL] {len(split):,} SMILES would be renamed NAME.<i> by --checkstereo:")
         for name, k, smi in split[:10]:
             print(f"           {name}  {k} isomer(s)  {smi}")
-        print("         Re-run assign_names.py in an env with THIS RDKit version, or "
-              "investigate the perception difference, before building.")
+        print("         Re-run `llb names` with an RDKit of THIS version (PREP_ENV in "
+              "the config), or investigate the perception difference, before building.")
     if unstable:
         print(f"  [warn] {len(unstable):,} SMILES enumerate to a different single SMILES. "
               f"Names are safe; the structure may be duplicated within its base id "
               f"(a wasted dock, not a split leak):")
         for name, a, b in unstable[:5]:
             print(f"           {name}  {a}\n                             -> {b}")
+    if crashed:
+        out = Path(args.smi).with_name(Path(args.smi).stem + ".stereo_crashed.tsv")
+        with open(out, "w") as fh:
+            fh.write("name\tsmiles\terror\n")
+            fh.writelines(f"{a}\t{b}\t{c}\n" for a, b, c in crashed)
+        print(f"  [warn] {len(crashed):,} SMILES crash RDKit's stereo enumeration; "
+              f"build_ligand will skip them (logged 'cannot be parsed', no db2). "
+              f"All in {out}; first 10:")
+        for name, smi, err in crashed[:10]:
+            print(f"           {name}  {smi}  ({err})")
     if badname or split:
         return 1
     print("  [ok  ] every SMILES is stereo-closed; --checkstereo will leave all names alone")

@@ -61,6 +61,7 @@ import argparse
 import csv
 import hashlib
 import json
+import os
 import re
 import sys
 from collections import Counter, defaultdict
@@ -87,6 +88,81 @@ def closure(smi: str) -> list[str]:
     if m is None:
         return []
     return sorted({Chem.MolToSmiles(x) for x in EnumerateStereoisomers(m, options=DB2C_OPTS)})
+
+
+_EMBED_CACHE: dict[str, bool] = {}
+
+
+def needs_embed_check(m: Chem.Mol) -> bool:
+    """A specified tetrahedral centre on an atom in two or more rings (fused,
+    bridged, spiro, cage): where a stereo label can describe a shape that
+    cannot exist. Elsewhere every combination is buildable."""
+    ri = m.GetRingInfo()
+    return any(a.GetChiralTag() != Chem.ChiralType.CHI_UNSPECIFIED
+               and ri.NumAtomRings(a.GetIdx()) >= 2 for a in m.GetAtoms())
+
+
+def _embeds(mh: Chem.Mol, seed: int, max_iters: int, random_coords: bool) -> bool:
+    from rdkit.Chem import AllChem
+    ps = AllChem.ETKDGv3()
+    ps.randomSeed = seed
+    ps.useRandomCoords = random_coords
+    if max_iters:
+        ps.maxIterations = max_iters
+    return AllChem.EmbedMolecule(mh, ps) != -1
+
+
+# Fast tries first; only a failure pays for the slow ones. Embedding is random:
+# on 9 strained-but-real isomers (fused cyclopropanes, bicyclo[2.1.1]) the fast
+# tries rejected 8; random coordinates with 200 attempts built all 8 that any
+# method here could (2026-10-16). Uncapped ETKDG is left out: it rescued fewer
+# and spends ~20 s on each impossible isomer.
+EMBED_TRIES = [(0xC0FFEE, 10, False), (0xBEEF, 10, False),      # fast
+               (7, 200, True),                                  # random coords
+               (1, 10, True), (2, 10, True), (3, 10, True)]
+
+
+def embed_verdict(smi: str) -> bool:
+    """Can RDKit build this stereoisomer in 3D at all? (no cache; picklable)"""
+    m = Chem.MolFromSmiles(smi)
+    if m is None or not needs_embed_check(m):
+        return True
+    mh = Chem.AddHs(m)
+    return any(_embeds(mh, seed, iters, rc) for seed, iters, rc in EMBED_TRIES)
+
+
+def embeddable(smi: str) -> bool:
+    """Can RDKit build this stereoisomer in 3D at all?
+
+    The closure enumerates every centre independently (as db2_converter does),
+    so on a cage it also writes configurations that cannot exist: 11 of 14
+    3chemistrycheck failures checked on the drug-like 10k fail to embed (the
+    conformer generator builds the possible isomer and the stereo check then
+    fails), and so do 285 of 314 1generate names. Verdicts are precomputed in
+    parallel by prefill_embed_cache; see EMBED_TRIES for what a rejection means.
+    """
+    if smi not in _EMBED_CACHE:
+        _EMBED_CACHE[smi] = embed_verdict(smi)
+    return _EMBED_CACHE[smi]
+
+
+def prefill_embed_cache(smiles: list[str], jobs: int) -> None:
+    """Decide every isomer up front, `jobs` processes at once: a rejection
+    costs seconds (all of EMBED_TRIES), ~800 of them per 10k parents."""
+    todo = sorted({s for s in smiles if s not in _EMBED_CACHE})
+    if not todo:
+        return
+    if jobs <= 1:
+        for s in todo:
+            _EMBED_CACHE[s] = embed_verdict(s)
+        return
+    import multiprocessing as mp
+    # fork where the platform has it (Linux, Great Lakes): workers inherit this
+    # module instead of re-running the caller's script, which spawn does
+    ctx = mp.get_context("fork") if "fork" in mp.get_all_start_methods() else mp.get_context()
+    with ctx.Pool(jobs) as pool:
+        for s, ok in zip(todo, pool.map(embed_verdict, todo, chunksize=64)):
+            _EMBED_CACHE[s] = ok
 
 
 def invertomer_key(smi: str) -> str:
@@ -130,12 +206,18 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--shards-dir", required=True,
-                    help="OUT_DIR of the QupKake array (holds shard_NNNNN/)")
+                    help="OUT_DIR of the QupKake array, or of llb merge (holds shard_NNNNN/)")
     ap.add_argument("--parents", default=None,
                     help="prepare_parents.py --outdir: completeness check + per-bin attrition")
     ap.add_argument("-o", "--outdir", default="library")
     ap.add_argument("--max-stereo", type=int, default=32,
                     help="isomers per protomer; db2_converter skips > 32")
+    ap.add_argument("--no-embed-check", action="store_true",
+                    help="keep stereoisomers RDKit cannot embed (cage configurations "
+                         "that cannot exist; db2_converter fails them as 3chemistrycheck)")
+    ap.add_argument("--jobs", type=int,
+                    default=int(os.environ.get("SLURM_CPUS_PER_TASK") or os.cpu_count() or 1),
+                    help="processes for the 3D check (default: SLURM_CPUS_PER_TASK, else all cores)")
     ap.add_argument("--allow-partial", action="store_true",
                     help="name what is finished even if some shards are not")
     args = ap.parse_args(argv)
@@ -182,10 +264,16 @@ def main(argv=None) -> int:
             pid = r.get("parent_id") or r["zinc_id"]     # older parents.tsv: zinc_id only
             input_name[pid] = r.get("input_name") or pid
 
+    # ---- 3D check of every closure isomer, in parallel ---------------------
+    if not args.no_embed_check:
+        isos = [smi for rows in rows_by_parent.values() for r in rows
+                for smi in closure(r["smiles"])]
+        prefill_embed_cache(isos, args.jobs)
+
     # ---- closure + naming ----------------------------------------------------
     library: list[dict] = []
     owner: dict[str, str] = {}                        # final SMILES -> name that holds it
-    closure_added = 0
+    closure_added = embed_dropped = embed_kept_all = 0
     for pid in sorted(rows_by_parent):
         by_state: dict[int, list[dict]] = defaultdict(list)
         for r in rows_by_parent[pid]:
@@ -211,6 +299,19 @@ def main(argv=None) -> int:
             if not_closed:
                 dropped.append((pid, str(p_old), "stereo_not_closed", not_closed[0]))
                 continue
+            if not args.no_embed_check:
+                impossible = [s for s in isomers if not embeddable(s)]
+                if impossible and len(impossible) == len(isomers):
+                    # never a protomer's last isomer: RDKit cannot embed some
+                    # real strained systems at any effort (bicyclo[1.1.1]pentanes,
+                    # fused cyclopropanes; 100 parents v1 built were lost this
+                    # way, 2026-10-16), so db2_converter decides instead
+                    embed_kept_all += 1
+                else:
+                    for s in impossible:
+                        dropped.append((pid, str(p_old), "stereo_cannot_embed", s))
+                    embed_dropped += len(impossible)
+                    isomers = [s for s in isomers if s not in impossible]
             taken = [s for s in isomers if s in owner]
             for s in taken:
                 dropped.append((pid, str(p_old), "duplicate_structure",
@@ -237,7 +338,10 @@ def main(argv=None) -> int:
                     "ph_values": head["ph_values"],
                     "population_estimate": head["population_estimate"],
                     "invertomer_of": inv if inv != name else "",
-                    "note": head["note"], "smiles": smi})
+                    "note": head["note"], "smiles": smi,
+                    # merged shards (pka_triage/merge_protomers.py) say which
+                    # predictor decided the parent; plain QupKake shards don't
+                    "site_source": head.get("site_source") or "qupkake"})
             p_new += 1
 
     # ---- invariants 1-3, asserted before anything final is written -----------
@@ -263,9 +367,9 @@ def main(argv=None) -> int:
     cols = ["name", "base_id", "parent_id", "zinc_id", "input_name", "protomer_index",
             "stereo_index", "net_charge",
             "heavy_atoms", "ph_values", "population_estimate", "invertomer_of", "note",
-            "smiles"]
+            "smiles", "site_source"]
     with open(outdir / "library.tsv", "w", newline="") as fh:
-        w = csv.DictWriter(fh, delimiter="\t", fieldnames=cols)
+        w = csv.DictWriter(fh, lineterminator="\n", delimiter="\t", fieldnames=cols)
         w.writeheader()
         w.writerows(library)
     with open(outdir / "dropped.tsv", "w") as fh:
@@ -292,6 +396,8 @@ def main(argv=None) -> int:
         "names": len(library),
         "protomers": len({(r["parent_id"], r["protomer_index"]) for r in library}),
         "stereo_closure_added": closure_added,
+        "stereo_cannot_embed": embed_dropped,
+        "protomers_none_embed_kept": embed_kept_all,
         "n_h_invertomers": sum(1 for r in library if r["invertomer_of"]),
         "dropped": dict(reasons),
         "net_charge": dict(sorted(Counter(r["net_charge"] for r in library).items())),
@@ -304,6 +410,11 @@ def main(argv=None) -> int:
           f"{stats['protomers']:,} protomers -> {stats['names']:,} names")
     print(f"  stereo closure added {closure_added:,} isomer(s) that --checkstereo would "
           f"otherwise have renamed")
+    if not args.no_embed_check:
+        print(f"  {embed_dropped:,} stereoisomer(s) dropped: no 3D structure exists "
+              f"(cage/bridged configurations; dropped.tsv stereo_cannot_embed)")
+        print(f"  {embed_kept_all:,} protomer(s) where no isomer embedded were kept whole "
+              f"(strained systems RDKit can't build; db2_converter decides)")
     print(f"  of which {stats['n_h_invertomers']:,} are N-H+ invertomers of another row "
           f"(library.tsv: invertomer_of) -- one species in solution; collapse downstream")
     for k, v in sorted(reasons.items()):
@@ -313,8 +424,9 @@ def main(argv=None) -> int:
     for b, c in attrition.items():
         print(f"  H{int(b):02d}  {c['named']:,} / {c['parents']:,} parents named")
     print(f"invariants 1-3 hold -> {outdir}/library.smi")
-    print(f"\nnext:  python3 stage4/validate_names.py --smi {outdir}/library.smi   (DRAP repo)")
-    print(f"       python check_db2_stereo.py {outdir}/library.smi               (db2_converter env)")
+    print(f"\nnext:  llb validate-names --smi {outdir}/library.smi   "
+          f"(DRAP's stage4/validate_names.py, found via DRAP_DIR in the config)")
+    print(f"       llb check-stereo {outdir}/library.smi             (this repo, db2_converter env)")
     return 0
 
 

@@ -58,10 +58,9 @@ whole path from here to db2.
 | `run.sh` | Drives `fetch.sh` through GNU parallel at a polite concurrency. |
 | `status.sh` | Diffs expected-vs-present on disk. **The authoritative completion check.** |
 | `verify.sh` | `gzip -t` every archive; `--purge` deletes corrupt ones. |
-| `parse_log.sh` | Classifies HTTP errors in `wget.log`. Diagnostic only. |
 | `tranche_pattern.sh` | Sanity-checks whether 404s are chemically real or a bug. |
 | `db2_sources.py` | Streams `.db2` records straight out of the tarballs. Don't extract. |
-| `sample_2d.py` | N SMILES per heavy-atom bin from ZINC22 2D, streamed, without downloading the bins. |
+| `sample_2d.py` | N SMILES per heavy-atom bin from ZINC22 2D: uniform from downloaded bins (`--local`), or streamed for a pilot. |
 
 Generated as you go: `urls.txt` (yours), `missing.txt`, `retry.txt`,
 `permanent.tsv`, `failed.tsv`, `wget.log`, `joblog-*.tsv`, `corrupt.txt`.
@@ -170,8 +169,9 @@ log named 37 failures (24× 404, 13× 500) while the filesystem showed **52**
 files missing. Building a retry list from the log would have silently dropped 39
 files that exist and were wanted.
 
-**Always use `status.sh` to decide what to retry.** `parse_log.sh` is for
-understanding *why* things failed, never for deciding *what* to refetch.
+**Always use `status.sh` (`llb fetch-status`) to decide what to retry.** The
+`wget.log` is for understanding *why* things failed, never for deciding *what*
+to refetch.
 
 ### 5. Exit code 8 means "HTTP error," not "404"
 

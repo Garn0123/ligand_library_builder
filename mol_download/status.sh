@@ -54,6 +54,6 @@ printf '%-28s %8d\n' \
 
 if (( retry == 0 && miss > 0 )); then
     echo
-    echo "All remaining gaps are confirmed-permanent. Run ./tranche_pattern.sh"
+    echo "All remaining gaps are confirmed-permanent. Run llb tranche-pattern"
     echo "to sanity-check that they cluster the way real absences should."
 fi

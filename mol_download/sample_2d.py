@@ -5,6 +5,9 @@ sample_2d.py -- draw N SMILES per heavy-atom bin from ZINC22 2D.
 Three modes
 -----------
   --local ROOT   UNIFORM over the whole bin, from files already on disk (run.sh).
+                 With --total N instead of --per-bin: ONE uniform draw of N over all
+                 the bins together, so each bin is represented in proportion to its
+                 size (written per bin as usual, plus POOLED.done).
                  One reservoir pass across every tranche file in the bin, so
                  every molecule in the bin is equally likely and the bin's logP
                  mix comes out right without any allocation. THE production mode.
@@ -40,6 +43,8 @@ Usage:
     python3 sample_2d.py --heavy 14-28 --print-urls > urls_2d.txt      # then run.sh
     python3 sample_2d.py --heavy 14-28 --local zinc22 --urls urls_2d.txt \
         --outdir samples                                                # uniform
+    python3 sample_2d.py --heavy 18-22 --total 10000 --local zinc22 --urls urls_2d.txt \
+        --outdir samples                                                # proportional
     python3 sample_2d.py --heavy 17 --per-bin 500 --outdir smoke       # pilot only
 
 stdlib only: runs on a DTN, login or compute node with any python3 >= 3.8.
@@ -210,18 +215,8 @@ def sample_bin(subset: str, hbin: str, per_bin: int, oversample: int,
     log(f"  -> {hbin}.smi  {len(chosen)} molecules")
 
 
-def sample_local(root: Path, subset: str, hbin: str, per_bin: int, seed: int,
-                 outdir: Path, urls: Path | None) -> None:
-    """Uniform sample of `per_bin` lines over every tranche file of a bin on disk.
-
-    Reservoir sampling, Algorithm L (Li 1994): one pass, O(k) memory, and the
-    random draws are only made at the (rare) replacement points, so the loop is
-    a line counter. Lines are parsed only if selected.
-    """
-    done = outdir / f"{hbin}.done"
-    if done.exists():
-        log(f"{hbin}: already done ({done}); --force to redo")
-        return
+def bin_files(root: Path, subset: str, hbin: str, urls: Path | None) -> list[Path]:
+    """Every tranche file of a bin on disk; with --urls, refuse if any is missing."""
     bindir = root / subset / hbin
     files = sorted(bindir.glob(f"{hbin}[MP][0-9][0-9][0-9].smi.gz"))
     if not files:
@@ -241,9 +236,18 @@ def sample_local(root: Path, subset: str, hbin: str, per_bin: int, seed: int,
                              f"{absent[:3]}. Finish run.sh / status.sh first.")
     else:
         log(f"  ! {hbin}: no --urls, so bin completeness is NOT checked")
+    return files
+
+
+def reservoir(files: list[Path], k: int, rng: random.Random):
+    """Uniform sample of k lines over all `files`, in order: Algorithm L (Li 1994).
+
+    One pass, O(k) memory; random draws only at the (rare) replacement points,
+    so the loop is a line counter. Returns ([(line, file name)], [(file name,
+    lines)], total lines).
+    """
     unzip = [shutil.which("pigz") or "gzip", "-dc"]
-    rng = random.Random(f"{seed}:{subset}:{hbin}:local")
-    k, i, nxt, w = per_bin, 0, -1, 0.0
+    i, nxt, w = 0, -1, 0.0
     res: list[tuple[bytes, str]] = []
     rows = []
     for f in files:
@@ -265,16 +269,20 @@ def sample_local(root: Path, subset: str, hbin: str, per_bin: int, seed: int,
                              f"Run verify.sh --purge and re-fetch before sampling.")
         rows.append((f.name, i - start))
         log(f"  {f.name}: {i - start:,} lines")
+    return res, rows, i
 
+
+def write_bin(outdir: Path, hbin: str, picked: list[tuple[bytes, str]],
+              rows: list[tuple[str, int]], done_fields: dict) -> int:
+    """Hxx.smi, Hxx.manifest.tsv, then Hxx.done (last). Returns molecules written."""
     chosen, bad = [], 0
-    for raw, _ in res:
+    for raw, _ in picked:
         parts = raw.decode("ascii", "replace").split()
         if len(parts) < 2 or not ZINC_ID.match(parts[1]):
             bad += 1
             continue
         chosen.append(f"{parts[0]} {parts[1]}")
-    per_file = Counter(fn for _, fn in res)
-
+    per_file = Counter(fn for _, fn in picked)
     tmp = outdir / f"{hbin}.smi.tmp"
     tmp.write_text("".join(f"{l}\n" for l in chosen))
     tmp.rename(outdir / f"{hbin}.smi")
@@ -282,11 +290,69 @@ def sample_local(root: Path, subset: str, hbin: str, per_bin: int, seed: int,
         fh.write("file\tlines\tsampled\n")
         fh.writelines(f"{n}\t{c}\t{per_file.get(n, 0)}\n" for n, c in rows)
     digest = hashlib.sha256((outdir / f"{hbin}.smi").read_bytes()).hexdigest()
-    done.write_text(f"mode=local\nroot={root.resolve()}\nsubset={subset}\n"
-                    f"per_bin={per_bin}\nsampled={len(chosen)}\npopulation={i}\n"
-                    f"malformed_selected={bad}\nn_files={len(files)}\nseed={seed}\n"
-                    f"sha256={digest}\ndate={time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-    log(f"  -> {hbin}.smi  {len(chosen):,} of {i:,} (uniform)")
+    fields = dict(done_fields, sampled=len(chosen), malformed_selected=bad, sha256=digest,
+                  date=time.strftime("%Y-%m-%d %H:%M:%S"))
+    (outdir / f"{hbin}.done").write_text("".join(f"{k}={v}\n" for k, v in fields.items()))
+    return len(chosen)
+
+
+def sample_local(root: Path, subset: str, hbin: str, per_bin: int, seed: int,
+                 outdir: Path, urls: Path | None) -> None:
+    """Uniform sample of `per_bin` lines over every tranche file of a bin on disk."""
+    done = outdir / f"{hbin}.done"
+    if done.exists():
+        log(f"{hbin}: already done ({done}); --force to redo")
+        return
+    files = bin_files(root, subset, hbin, urls)
+    rng = random.Random(f"{seed}:{subset}:{hbin}:local")
+    res, rows, population = reservoir(files, per_bin, rng)
+    n = write_bin(outdir, hbin, res, rows, {
+        "mode": "local", "root": root.resolve(), "subset": subset, "per_bin": per_bin,
+        "population": population, "n_files": len(files), "seed": seed})
+    log(f"  -> {hbin}.smi  {n:,} of {population:,} (uniform)")
+
+
+def sample_local_pooled(root: Path, subset: str, bins: list[str], total: int, seed: int,
+                        outdir: Path, urls: Path | None) -> None:
+    """Uniform sample of `total` lines over ALL the bins' files together.
+
+    Every molecule in the pooled bins is equally likely, so each bin's share of
+    the sample is its share of the molecules -- proportional to bin size with
+    no allocation step and no second pass. Written per bin (Hxx.smi etc.) so
+    the next step is unchanged; POOLED.done records the draw as a whole.
+    """
+    pool_done = outdir / "POOLED.done"
+    if pool_done.exists():
+        log(f"pooled sample already done ({pool_done}); --force to redo")
+        return
+    stale = [b for b in bins if (outdir / f"{b}.done").exists()]
+    if stale:
+        raise SystemExit(f"{outdir} already holds per-bin samples for {stale}; a pooled "
+                         f"draw must not mix with them. Use a new --outdir.")
+    files_of = {b: bin_files(root, subset, b, urls) for b in bins}
+    order = [f for b in bins for f in files_of[b]]
+    bin_of = {f.name: b for b in bins for f in files_of[b]}
+    rng = random.Random(f"{seed}:{subset}:{'+'.join(bins)}:pooled")
+    res, rows, population = reservoir(order, total, rng)
+
+    lines_in = Counter()
+    for name, c in rows:
+        lines_in[bin_of[name]] += c
+    summary = []
+    for b in bins:
+        picked = [r for r in res if bin_of[r[1]] == b]
+        n = write_bin(outdir, b, picked, [r for r in rows if bin_of[r[0]] == b], {
+            "mode": "local_pooled", "root": root.resolve(), "subset": subset,
+            "pool": "+".join(bins), "pool_total": total, "pool_population": population,
+            "population": lines_in[b], "n_files": len(files_of[b]), "seed": seed})
+        summary.append((b, lines_in[b], n))
+        log(f"  -> {b}.smi  {n:,} of {lines_in[b]:,} "
+            f"({100 * lines_in[b] / population:.1f}% of the pool's molecules)")
+    pool_done.write_text(
+        f"mode=local_pooled\nbins={'+'.join(bins)}\ntotal={total}\n"
+        f"population={population}\nseed={seed}\n"
+        + "".join(f"{b}\tpopulation={p}\tsampled={n}\n" for b, p, n in summary)
+        + f"date={time.strftime('%Y-%m-%d %H:%M:%S')}\n")
 
 
 def parse_heavy(spec: str) -> list[str]:
@@ -302,6 +368,10 @@ def main(argv=None) -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--heavy", required=True, help="bins, e.g. '14-28' or '14,17,20'")
     ap.add_argument("--per-bin", type=int, default=20000)
+    ap.add_argument("--total", type=int, default=None,
+                    help="with --local: draw this many molecules uniformly over ALL the "
+                         "bins together, so each bin's share is proportional to its size "
+                         "(instead of --per-bin from each)")
     ap.add_argument("--oversample", type=int, default=10,
                     help="read this many times the quota from each file, sample from that")
     ap.add_argument("--seed", type=int, default=20260923)
@@ -326,6 +396,18 @@ def main(argv=None) -> int:
 
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
+    if args.total is not None:
+        if not args.local:
+            raise SystemExit("--total (proportional to bin size) needs --local: a streamed "
+                             "sample only sees the front of each file")
+        bins = parse_heavy(args.heavy)
+        if args.force:
+            for b in bins:
+                (outdir / f"{b}.done").unlink(missing_ok=True)
+            (outdir / "POOLED.done").unlink(missing_ok=True)
+        sample_local_pooled(Path(args.local), args.subset, bins, args.total, args.seed,
+                            outdir, Path(args.urls) if args.urls else None)
+        return 0
     for hbin in parse_heavy(args.heavy):
         if args.force:
             (outdir / f"{hbin}.done").unlink(missing_ok=True)

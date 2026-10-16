@@ -78,6 +78,138 @@ BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 DEFAULT_STEREO_CAP = 32
 
 
+# Sites no predictor should be trusted on, dropped before any state is built
+# (both paths: QupKake here, MolGpKa in pka_triage/triage.py).
+#
+#  amide_nh_acid  N-H of an amide, anilide, urea, carbamate, hydrazide or
+#                 thioamide as an ACID. QupKake put 44 of them at 2.4-6.7 on
+#                 Owen's set (2026-10-08), making an amide anion the dominant
+#                 state at pH 7.4 in 22 of 50 parents; MolGpKa put some anilides
+#                 at 6-7. Reference values (sources in pka_triage/TRIAGE.md):
+#                 acetamide 15.1 in water (extrapolated) and 25.5 in DMSO;
+#                 DMSO: N-methylacetamide 25.9, benzamide 23.3, acetanilide
+#                 21.5, urea 26.9, ethyl carbamate 24.2, thioacetamide 18.5 --
+#                 all well above the imides that ARE acidic at physiological
+#                 pH (succinimide 14.7 in DMSO; phthalimide 8.30 in water).
+#                 Kept: imide N-H (between two C=O) and N-sulfonyl N-H
+#                 (acylsulfonamides, sulfonylureas; acidic, value not sourced).
+#  amine_nh_acid  N-H of an amine (alkyl, cyclic, aniline, diarylamine,
+#                 enamine) as an ACID, i.e. an [N-]/[NH-] anion. NH3 is 38 in
+#                 water (extrapolated; Ripin & Evans) and 41 in DMSO; DMSO:
+#                 pyrrolidine 44, aniline 30.6, diphenylamine 25.0 (Reich).
+#                 Seen on Owen's set (2026-10-08): [NH-] and [N-] protomers.
+#                 (The parent whose [N-] protomers failed db2_converter
+#                 with 1generate failed again without them: its scaffold,
+#                 not its protonation, defeats conformer generation.)
+#                 N bonded to anything but C/H, or to C=N/O/S, is left alone.
+#  oxygen_base    any O as a BASE: C(=O)[OH2+], protonated nitro [N+](=O)O,
+#                 oxonium ions. Water (Reich): protonated nitrobenzene -12.4,
+#                 protonated benzoic acid -7.8, Me2OH+ -3.8, MeOH2+ -2.2.
+#                 QupKake produced these on Owen's set (rebuild of 2026-10-14).
+#  alcohol_oh_acid  O-H on an sp3 carbon as an ACID (alkoxide). Water (Reich):
+#                 methanol 16, tert-butanol 20. Phenols (10.0), enols (10.5-
+#                 10.9), acids, oximes and hydroxamic acids are left alone.
+#  amide_n_base   any N on C=O/C=S or S(=O)=O as a BASE. Amides protonate on
+#                 O, not N, and even that is pKa -0.62 (acetamide, water);
+#                 MolGpKa's patterns put anilides at 3.9-6.
+# --keep-amide-sites turns both off.
+IMPLAUSIBLE_SITES = {
+    ("acidic", "amide_nh_acid"): Chem.MolFromSmarts(
+        "[#7;!H0;$([#7]-[#6]=[#8,#16]);!$([#7](-[#6]=[#8,#16])-[#6]=[#8,#16]);"
+        "!$([#7]-[#16](=[#8])=[#8])]"),
+    ("acidic", "amine_nh_acid"): Chem.MolFromSmarts(
+        "[#7X3;!a;!H0;!$([#7]~[!#6;!#1]);!$([#7]-[#6]=,#[#7,#8,#16])]"),
+    ("basic", "oxygen_base"): Chem.MolFromSmarts("[#8]"),
+    ("acidic", "alcohol_oh_acid"): Chem.MolFromSmarts("[#8X2;H1][CX4]"),
+    ("basic", "amide_n_base"): Chem.MolFromSmarts(
+        "[#7;$([#7]-[#6]=[#8,#16]),$([#7]-[#16](=[#8])=[#8])]"),
+    # C-H acids, except the two kinds with water pKa inside or near 6.4-8.4:
+    # a CH between two ketone/aldehyde carbonyls (acetylacetone 8.95, dimedone
+    # 5.23, triacetylmethane 5.85) and a CH carrying a nitro group
+    # (2-nitropropane 7.74, nitroethane 8.6). Ester-, nitrile- and sulfone-
+    # activated CH (ethyl acetoacetate 10.68, diethyl malonate 13.3,
+    # malononitrile 11.81) and everything less activated are dropped. MolGpKa
+    # put malonic acid's CH2 near pH 7 and built a [CH-] trianion.
+    # The amino N's of an amidine or guanidine. These take ONE proton, on the
+    # imine N, with the charge shared over all of them: guanidine 13.71,
+    # acetamidine 12.52, benzamidine 11.6, phenylguanidine 10.88, one pKa each
+    # (Williams compilation p. 29). QupKake gave each amino N its own basic
+    # site (10.7-11.1) beside the =N (11.5-11.8), which built +2/+3 guanidines
+    # on the drug-like 10k; biguanide shows how far a second proton on one
+    # conjugated system sits (13.25, then 3.07). Aromatic C (2-aminopyridine
+    # etc.) is not matched: there the ring N is the base. A dropped site moves
+    # to the =N when the predictor gave the =N none (filter_sites).
+    ("basic", "amidine_amino_n_base"): Chem.MolFromSmarts(
+        "[#7;!a;$([#7]-[#6;!a]=[#7;!a])]"),
+    # Sulfur as a base (thioether, thiophene, thiocarbonyl, sulfone S): built
+    # a sulfonium [SH+] on the drug-like 10k. Protonated ethers are already
+    # -2 to -3.8 (THF -2.05, Me2O -3.8; Ripin & Evans table p1) and sulfides are
+    # weaker bases still -- chemistry, not a checked number for sulfur.
+    ("basic", "sulfur_base"): Chem.MolFromSmarts("[#16]"),
+    # Any atom of an azide or diazo group as a base: built R-N=[N+]=NH, an
+    # azide protonated on its terminal N, in every protomer of 38 names (which
+    # then crash RDKit's stereo enumeration). Not protonated at pH 6-8 --
+    # chemistry, not a checked number.
+    ("basic", "azide_base"): Chem.MolFromSmarts(
+        "[#7,#6;$(*=[#7+]=[#7-]),$(*~[#7+]~[#7-]),$([#7+](~*)~[#7-]),$([#7-]~[#7+])]"),
+    ("acidic", "carbon_acid"): Chem.MolFromSmarts(
+        "[#6;!$([#6X4]-[#7+](=O)[#8-]);!$([#6X4]-[#7](=O)=O);"
+        "!$([#6X4](-[CX3;$(C=O);!$(C(=O)-[#7,#8,#16])])-[CX3;$(C=O);!$(C(=O)-[#7,#8,#16])])]"),
+}
+
+
+# Bumped whenever IMPLAUSIBLE_SITES changes, and written into every output
+# that depends on it, so runs filtered by different rules are never mixed.
+SITE_FILTER_VERSION = 6          # 1: amide rules (2026-10-08); 2: + amine_nh_acid;
+                                 # 3: + oxygen_base, alcohol_oh_acid (2026-10-14)
+                                 # 4: + carbon_acid (2026-10-15)
+                                 # 5: + amidine_amino_n_base (2026-10-16)
+                                 # 6: + sulfur_base, azide_base (2026-10-16)
+
+
+def implausible_sites(mol: Chem.Mol) -> dict[tuple[int, str], str]:
+    """{(atom index, kind): reason} for sites on `mol` that are dropped."""
+    out = {}
+    for (kind, reason), patt in IMPLAUSIBLE_SITES.items():
+        for m in mol.GetSubstructMatches(patt):
+            out[(m[0], kind)] = reason
+    return out
+
+
+_AMIDINE_IMINE = Chem.MolFromSmarts("[#7;!a]-[#6;!a]=[#7;!a]")
+
+
+def filter_sites(mol: Chem.Mol, sites: list, bad: dict | None = None):
+    """-> (kept sites, [(dropped site, reason)]) under IMPLAUSIBLE_SITES.
+
+    The one rule that moves rather than drops: basic sites on an amidine or
+    guanidine amino N. If the =N of that group has no basic site of its own, the
+    highest-pKa amino-N site moves onto it (the predictor's estimate for
+    protonating the group, put on the atom that takes the proton); the rest are
+    dropped. `bad` = implausible_sites(mol), if already computed.
+    """
+    bad = implausible_sites(mol) if bad is None else bad
+    kept, dropped, moved = [], [], {}
+    for s in sites:
+        reason = bad.get((s.idx, s.kind))
+        if reason is None:
+            kept.append(s)
+            continue
+        dropped.append((s, reason))
+        if reason == "amidine_amino_n_base":
+            for m in mol.GetSubstructMatches(_AMIDINE_IMINE):
+                if m[0] == s.idx:
+                    moved.setdefault(m[2], []).append(s)
+    have = {s.idx for s in kept if s.kind == "basic"}
+    for imine, group in moved.items():
+        if imine in have:
+            continue
+        best = max(group, key=lambda t: t.pka)
+        kept.append(type(best)(idx=imine, kind="basic", pka=best.pka))
+        have.add(imine)
+    return kept, dropped
+
+
 # --------------------------------------------------------------------------
 # data model
 # --------------------------------------------------------------------------
@@ -131,8 +263,99 @@ class Protomer:
 
 
 # --------------------------------------------------------------------------
+# aromatic N: MolGpKa's value when the molecule also has another base
+# --------------------------------------------------------------------------
+# pka_triage/reference (2026-10-16): alone, QupKake's aromatic N pKas are as good
+# as MolGpKa's (MAE 0.66 vs 0.51 on 20 measured rings). With a guanidine or a
+# dimethylamine two carbons away, QupKake's ring N takes the strong base's
+# value whatever the ring (oxazole 2.6 -> 10.3 / 8.6, pyrazine 2.9 -> 10.5 /
+# 8.9, tetrazole 3.0 -> 9.8 / 7.7); MolGpKa moves 0-3.5. So in a routed parent
+# that has a basic site off the ring (either tool's, on an atom neither
+# aromatic nor bonded to one; any pKa: v1 required >= 7 and missed a
+# tetrazole that QupKake put at 5.6-5.8 beside an amine both tools put at
+# 5.63 -- the same artefact with a weaker base),
+# the basic sites on aromatic N come from MolGpKa (the triage's sites);
+# everything else stays QupKake's. A weak exocyclic base does not trigger it:
+# 4-aminopyridine alone is QupKake 9.49, MolGpKa 6.98, measured 9.17.
+AROMATIC_N_VERSION = "2"
+
+
+def atom_map(src: Chem.Mol, parent: Chem.Mol) -> dict[int, int] | None:
+    """src heavy-atom index -> parent atom index, by substructure match."""
+    src = Chem.RemoveHs(src, sanitize=False)
+    m = src.GetSubstructMatch(parent)          # m[parent_idx] = src_idx
+    if len(m) != parent.GetNumAtoms():
+        return None
+    return {s: p for p, s in enumerate(m)}
+
+
+def molgpka_ref(smiles: str) -> Chem.Mol:
+    """The molecule the triage's site indices refer to (MolGpKa.predict)."""
+    return Chem.MolFromSmiles(Chem.MolToSmiles(_UNCHARGER.uncharge(Chem.MolFromSmiles(smiles))))
+
+
+def _aromatic_n(mol: Chem.Mol, s) -> bool:
+    a = mol.GetAtomWithIdx(s.idx)
+    return s.kind == "basic" and a.GetAtomicNum() == 7 and a.GetIsAromatic()
+
+
+def _off_ring_base_atom(a) -> bool:
+    """Not aromatic and not bonded to an aromatic atom: an aryl amine (aniline
+    4.6, the NH2 of an aminopyridine) is a weak base whatever a tool predicts,
+    and is not the kind of group that pulled QupKake's ring N values up."""
+    return not a.GetIsAromatic() and not any(n.GetIsAromatic() for n in a.GetNeighbors())
+
+
+def hybrid_aromatic_n(mol: Chem.Mol, qk_sites: list, mg_sites: list):
+    """-> (sites, [(atom, qupkake pKa or None, molgpka pKa or None)]).
+
+    mg_sites must already be on mol's atom indices. Unchanged unless some site
+    (either tool's) is basic on an atom that is neither aromatic nor bonded to
+    an aromatic atom.
+    """
+    other_base = any(s.kind == "basic" and _off_ring_base_atom(mol.GetAtomWithIdx(s.idx))
+                     for s in [*qk_sites, *mg_sites])
+    if not other_base:
+        return qk_sites, []
+    q = {s.idx: s.pka for s in qk_sites if _aromatic_n(mol, s)}
+    m = {s.idx: s.pka for s in mg_sites if _aromatic_n(mol, s)}
+    if not q and not m:
+        return qk_sites, []
+    sites = [s for s in qk_sites if not _aromatic_n(mol, s)]
+    sites += [s for s in mg_sites if _aromatic_n(mol, s)]
+    return sites, [(i, q.get(i), m.get(i)) for i in sorted(set(q) | set(m))]
+
+
+def read_molgpka_sites(path: Path) -> dict[str, tuple[str, list]]:
+    """parent_id -> (parent SMILES, [Site on molgpka_ref indices]); a parent with
+    no MolGpKa site has a row with an empty idx."""
+    out: dict[str, tuple[str, list]] = {}
+    with open(path) as fh:
+        for r in csv.DictReader(fh, delimiter="\t"):
+            smi, sites = out.setdefault(r["parent_id"], (r["smiles"], []))
+            if r["idx"] != "":
+                sites.append(Site(idx=int(r["idx"]), kind=r["kind"], pka=float(r["pka"])))
+    return out
+
+
+# --------------------------------------------------------------------------
 # input / standardization
 # --------------------------------------------------------------------------
+# protomers.csv, read by assign_names.py and pka_triage/merge_protomers.py.
+# pka_triage/triage.py writes the same columns plus its own at the end.
+PROTOMER_COLUMNS = ["protomer_name", "parent_name", "smiles", "net_charge",
+                    "n_pos_atoms", "n_neg_atoms", "zwitterion", "ph_values",
+                    "population_estimate", "n_changes", "protomer_index",
+                    "stereo_index", "note"]
+
+
+def protomer_row(p: Protomer) -> list:
+    return [p.name, p.parent, p.smiles, p.charge, p.n_pos, p.n_neg,
+            int(p.is_zwitterion), ";".join(f"{v:g}" for v in sorted(set(p.ph_values))),
+            f"{p.population:.4f}", len(p.changes), p.protomer_index, p.stereo_index,
+            p.note]
+
+
 def read_smi(path: Path, delim: str | None = None) -> list[tuple[str, str]]:
     """Read a 2-column SMILES file (SMILES NAME), no header."""
     out, seen = [], Counter()
@@ -158,6 +381,57 @@ def read_smi(path: Path, delim: str | None = None) -> list[tuple[str, str]]:
 
 
 _UNCHARGER = rdMolStandardize.Uncharger()
+
+
+# An unsubstituted exocyclic imine (N=c1[nH]..., N=C(O)...): the imino
+# tautomer of a 2-/4-amino azine or azole (aminopyridine, aminothiazole,
+# aminooxazole, aminotriazole). ZINC writes some parents this way. In water the
+# amino form dominates for these (Angyal & Angyal, J. Chem. Soc. 1952, 1461;
+# Angyal & Werner, ibid. 1952, 2911), the measured base pKa is the amino form's
+# ring N (2-aminopyridine 6.86, 2-aminothiazole 5.39; Williams pp. 27, 28), and
+# the =NH bond crashes RDKit 2024.03.5's stereo enumeration (Range Error idx2),
+# so db2_converter skips every protomer built on it (247 names on the 10k).
+# Since 2026-10-16 also acyclic: a primary carbamate drawn as its imidic acid
+# (RO-C(=NH)-OH) and an amidoxime ether with the =NH on the wrong N
+# (R-C(=NH)-NH-OR') reached the v6 library and crashed the same enumeration.
+_RING_IMINE = Chem.MolFromSmarts("[NX2H1;!R]=[#6]")
+
+
+def amino_tautomer(mol: Chem.Mol) -> Chem.Mol | None:
+    """The tautomer without an unsubstituted exocyclic =NH, or None when there
+    is none to move to (an N-alkyl iminopyridine; a plain amidine C(=NH)NH2,
+    whose every tautomer has one).
+
+    Only the proton moves: the chosen tautomer differs from `mol` in H count on
+    N and O atoms alone (the exocyclic =NH among them: imino -> amino, imidic
+    acid -> amide), and stereo elsewhere in the molecule is kept.
+    """
+    if not mol.HasSubstructMatch(_RING_IMINE):
+        return None
+    params = rdMolStandardize.CleanupParameters()
+    params.tautomerRemoveSp3Stereo = False
+    params.tautomerRemoveBondStereo = False
+    params.tautomerRemoveIsotopicHs = False
+    enum = rdMolStandardize.TautomerEnumerator(params)
+    exo = {m[0] for m in mol.GetSubstructMatches(_RING_IMINE)}
+    h0 = [a.GetTotalNumHs() for a in mol.GetAtoms()]
+    best = None
+    for t in enum.Enumerate(mol):
+        if t.HasSubstructMatch(_RING_IMINE):
+            continue
+        changed = [i for i, a in enumerate(t.GetAtoms()) if a.GetTotalNumHs() != h0[i]]
+        if not changed or not exo & set(changed):
+            continue
+        if any(t.GetAtomWithIdx(i).GetAtomicNum() not in (7, 8) for i in changed):
+            continue
+        key = (len(changed), -enum.ScoreTautomer(t), Chem.MolToSmiles(t))
+        if best is None or key < best[0]:
+            best = (key, t)
+    if best is None:
+        return None
+    out = Chem.Mol(best[1])
+    Chem.AssignStereochemistry(out, cleanIt=True, force=True)
+    return out
 
 
 def standardize(smi: str, neutralize: bool = True, largest_fragment: bool = True):
@@ -301,6 +575,32 @@ class QupKakeProgress:
         return False
 
 
+def qupkake_can_embed(smi: str, tries: int = 3) -> bool:
+    """Would QupKake's own input step get through this molecule?
+
+    `qupkake file x.csv` first embeds every row (cli.embed_molecule: AddHs,
+    EmbedMolecule, MMFFOptimizeMolecule, nothing checked). A molecule that does
+    not embed makes MMFFOptimizeMolecule raise "Bad Conformer Id", and QupKake
+    exits before processing ANY molecule in the file: on the drug-like 10k,
+    189 of 1,000 ten-molecule shards died this way. Same calls here, in the same
+    environment; QupKake's embed is unseeded, so a molecule must embed under
+    every one of `tries` seeds to be sent.
+    """
+    from rdkit.Chem import AllChem
+    mol = Chem.MolFromSmiles(smi)
+    if mol is None:
+        return False
+    mol = Chem.AddHs(mol)
+    try:
+        for seed in range(tries):
+            if AllChem.EmbedMolecule(mol, randomSeed=0xC0FFEE + seed) == -1:
+                return False
+        AllChem.MMFFOptimizeMolecule(mol)
+    except Exception:                    # noqa: BLE001 -- anything QupKake would die on
+        return False
+    return True
+
+
 def run_qupkake(csv_path: Path, root: Path, output: str, tautomerize: bool,
                 nproc: int | None, exe: str = "qupkake",
                 n_mols: int = 0, progress_interval: float = 60) -> Path:
@@ -332,6 +632,8 @@ def run_qupkake(csv_path: Path, root: Path, output: str, tautomerize: bool,
 
 def parse_qupkake_sdf(path: Path) -> dict[str, tuple[Chem.Mol, list[Site]]]:
     """Group the per-site SDF records by molecule name."""
+    if path.stat().st_size == 0:          # nothing was sent to QupKake (RDKit refuses empty files)
+        return {}
     supplier = Chem.SDMolSupplier(str(path), removeHs=False, sanitize=True)
     grouped: dict[str, tuple[Chem.Mol, list[Site]]] = {}
     bad = 0
@@ -504,9 +806,151 @@ def apply_changes(ref: Chem.Mol, changes: Iterable[tuple[int, int]],
     return Chem.MolToSmiles(round_trip)
 
 
+# --------------------------------------------------------------------------
+# site coupling
+# --------------------------------------------------------------------------
+# QupKake and MolGpKa each predict a site's pKa with every other site neutral.
+# Charging one amine makes the next one harder to charge, and the independent
+# Henderson-Hasselbalch product ignores that: on the drug-like 10k, QupKake's
+# states reached +4/+5 on 20-heavy-atom molecules where MolGpKa (one charge)
+# disagreed. --coupling on scores every combination of sites with a pairwise
+# penalty for each two same-kind sites both charged:
+#
+#   log10 weight(state) = sum over charged sites of (pKa - pH) [base] or
+#                         (pH - pKa) [acid]  -  sum over same-kind charged
+#                         pairs of SHIFT(bonds apart, same ring)
+#
+# SHIFT is the micro-pKa shift of the second site, from symmetric diamines and
+# diacids: (pKa1 - pKa2) - log10(4), the log10(4) being the statistical part of
+# the gap for two equivalent sites. Water, 25 C, from R. Williams, "pKa Data
+# Compiled by R. Williams" (ACS Organic Division, updated 4/7/2022):
+#   bases  ethylenediamine 9.98/7.52 (3 bonds) -> 1.9; 1,2-diaminopropane
+#          10.00/7.13 -> 2.3; 2,3-diaminobutane 10.00/6.91 -> 2.5   (p15, p20)
+#          1,3-diamino-2,2-dimethylpropane 10.22/8.18 (4) -> 1.4;
+#          1,3-diaminopropan-2-ol 9.68/8.23 (4) -> 0.85              (p20)
+#          H2N(CH2)4NH2 10.84/9.31 (5) -> 0.9; H2N(CH2)5NH2 11.05/9.74
+#          (6) -> 0.7                                                (p15)
+#          piperazine 9.82/5.68 (3, same ring) -> 3.5; triethylenediamine
+#          8.19/4.18 -> 3.4                                          (p20)
+#   acids  (OH oxygen to OH oxygen) oxalic 1.23/4.19 (3) -> 2.4; malonic
+#          2.83/5.69 (4) -> 2.3; succinic 4.19/5.48 (5) -> 0.7; glutaric
+#          4.34/5.42 (6) -> 0.5; adipic 4.42/5.41 (7) -> 0.4          (p7)
+# Under 3 bonds (no symmetric reference) the 3-bond value is used; 7 bonds for
+# bases borrows the acid value; 8-10 bonds 0.3 and beyond 10 nothing are
+# extrapolations, not data. Opposite charges (zwitterions) are NOT coupled:
+# the correction only ever removes charge. Through an aromatic ring the real
+# coupling is larger (pyrazine, pyrimidine), so this under-corrects there.
+COUPLING_VERSION = "1"
+BASE_SHIFT = {3: 2.2, 4: 1.1, 5: 0.9, 6: 0.7, 7: 0.4}
+ACID_SHIFT = {3: 2.4, 4: 2.3, 5: 0.7, 6: 0.5, 7: 0.4}
+RING_SHIFT = 3.5                 # same ring, <= 3 bonds (piperazine, DABCO)
+FAR_SHIFT, FAR_BONDS = 0.3, 10
+MAX_EXACT_SITES = 12             # 2^12 microstates scored exactly
+
+
+class Coupling:
+    """Pairwise same-kind penalties for one molecule (the one site indices refer to)."""
+
+    def __init__(self, ref: Chem.Mol):
+        self.dist = Chem.GetDistanceMatrix(ref)
+        self.rings = [set(r) for r in ref.GetRingInfo().AtomRings()]
+
+    def shift(self, a: Site, b: Site) -> float:
+        if a.kind != b.kind or a.idx == b.idx:
+            return 0.0
+        d = int(self.dist[a.idx][b.idx])
+        if d <= 3 and any(a.idx in r and b.idx in r for r in self.rings):
+            return RING_SHIFT
+        table = BASE_SHIFT if a.kind == "basic" else ACID_SHIFT
+        if d <= 3:
+            return table[3]
+        if d in table:
+            return table[d]
+        return FAR_SHIFT if d <= FAR_BONDS else 0.0
+
+
+def _log_ratio(s: Site, ph: float) -> float:
+    """log10(changed / unchanged) for an isolated site."""
+    return s.pka - ph if s.kind == "basic" else ph - s.pka
+
+
+def coupled_microstates(sites: list[Site], ph: float, margin: float, coupling: Coupling):
+    """-> (variable sites, sites held changed, population factor of the rest,
+    {on-tuple over the variable sites: probability}).
+
+    A site already more than `margin` on the unchanged side stays there (the
+    penalty only pushes it further), so it is held unchanged and contributes
+    its isolated (1 - f). Past MAX_EXACT_SITES, the most strongly changed
+    sites are held changed (their penalties still count against the rest).
+    """
+    rest = 1.0
+    var = []
+    for s in sites:
+        if _log_ratio(s, ph) < -margin:
+            rest *= 1.0 - s.changed_fraction(ph)
+        else:
+            var.append(s)
+    held: list[Site] = []
+    if len(var) > MAX_EXACT_SITES:
+        var.sort(key=lambda s: abs(_log_ratio(s, ph)))
+        var, held = var[:MAX_EXACT_SITES], var[MAX_EXACT_SITES:]
+        for s in held:
+            rest *= s.changed_fraction(ph)
+    held_w = (sum(_log_ratio(s, ph) for s in held)
+              - sum(coupling.shift(a, b) for i, a in enumerate(held) for b in held[i + 1:]))
+    h = [_log_ratio(s, ph) for s in var]
+    with_held = [sum(coupling.shift(s, t) for t in held) for s in var]
+    pair = {(i, j): coupling.shift(var[i], var[j])
+            for i in range(len(var)) for j in range(i + 1, len(var))}
+    logw = {}
+    for on in product((0, 1), repeat=len(var)):
+        idx = [i for i, f in enumerate(on) if f]
+        logw[on] = (held_w + sum(h[i] - with_held[i] for i in idx)
+                    - sum(pair[i, j] for k, i in enumerate(idx) for j in idx[k + 1:]))
+    top = max(logw.values())
+    z = sum(10.0 ** (w - top) for w in logw.values())
+    probs = {on: 10.0 ** (w - top) / z for on, w in logw.items()}
+    return var, held, rest, probs
+
+
+def dominant_sites(sites: list[Site], ph: float, coupling: Coupling | None = None):
+    """The most populated microstate at this pH, as the set of changed sites."""
+    if coupling is None:
+        return [s for s in sites if s.changed_fraction(ph) >= 0.5]
+    var, held, _, probs = coupled_microstates(sites, ph, 0.0, coupling)
+    best = max(probs, key=probs.get)
+    return held + [s for f, s in zip(best, var) if f]
+
+
+def _enumerate_coupled(sites, ph, margin, max_ambiguous, coupling):
+    var, held, rest, probs = coupled_microstates(sites, ph, margin, coupling)
+    # each variable site's population-weighted chance of being changed: a site
+    # whose coupled log-ratio is beyond `margin` is locked, as in the
+    # independent rule (where the log-ratio is just pKa - pH)
+    lr = []
+    for i in range(len(var)):
+        m = sum(p for on, p in probs.items() if on[i])
+        m = min(max(m, 1e-12), 1 - 1e-12)
+        lr.append(math.log10(m / (1 - m)))
+    amb = [i for i in range(len(var)) if abs(lr[i]) <= margin]
+    if len(amb) > max_ambiguous:
+        amb = sorted(amb, key=lambda i: abs(lr[i]))[:max_ambiguous]
+    base = [1 if lr[i] > 0 else 0 for i in range(len(var))]
+    for combo in product((0, 1), repeat=len(amb)):
+        on = list(base)
+        for i, f in zip(amb, combo):
+            on[i] = f
+        changes = [(s.idx, s.delta) for s in held]
+        changes += [(s.idx, s.delta) for f, s in zip(on, var) if f]
+        yield tuple(sorted(changes)), probs[tuple(on)] * rest
+
+
 def enumerate_states(sites: list[Site], ph: float, margin: float,
-                     max_ambiguous: int):
+                     max_ambiguous: int, coupling: Coupling | None = None):
     """Yield (changes, population) for every state worth building at this pH."""
+    if coupling is not None:
+        yield from _enumerate_coupled(sites, ph, margin, max_ambiguous, coupling)
+        return
     locked: list[tuple[int, int]] = []
     ambiguous: list[Site] = []
     base_pop = 1.0
@@ -545,6 +989,94 @@ def enumerate_states(sites: list[Site], ph: float, margin: float,
             else:
                 pop *= (1.0 - f)
         yield tuple(sorted(changes)), pop
+
+
+def unchanged_protomers(name: str, isomers: list[Chem.Mol],
+                        ph_values: list[float]) -> list[Protomer]:
+    """No ionizable site predicted: carry each isomer through unchanged."""
+    return [Protomer(parent=name, smiles=Chem.MolToSmiles(iso),
+                     charge=Chem.GetFormalCharge(iso), ph_values=list(ph_values),
+                     population=1.0, note="no_sites_predicted", stereo_index=k)
+            for k, iso in enumerate(isomers)]
+
+
+def build_protomers(name: str, isomers: list[Chem.Mol], ref: Chem.Mol,
+                    sites: list[Site], ph_values: list[float], margin: float,
+                    min_population: float, max_states: int, max_ambiguous: int,
+                    stereo: str, fallback_note: str = "built_on_qupkake_tautomer",
+                    coupling: bool = False):
+    """One parent's sites -> its protomers at every pH, for every stereoisomer.
+
+    `ref` is the molecule the site indices refer to (QupKake's SDF mol, or
+    MolGpKa's re-parsed parent); `isomers` are the parent's input stereoisomers.
+    Returns (protomers, states dropped by the filters, states that failed to
+    build, whether the isomers themselves could be used).
+    """
+    # Build on the isomer itself where possible: it already carries the
+    # right stereo in the site predictor's atom order, so nothing has to be
+    # transferred and E/Z survives.  Fall back to `ref` (with stereo
+    # reconciliation) when the predictor rewrote the molecule (QupKake -t).
+    use_isomer = skeleton_matches(ref, isomers[0])
+    dropped_states = build_failures = 0
+
+    # 1. collect unique protonation STATES for the parent, judged on the
+    #    first isomer so a state gets one index across every isomer
+    #    Keyed by the built SMILES, not by which sites changed: in a symmetric
+    #    molecule (piperazine) protonating either N gives one species, and its
+    #    population is the sum of the two microstates.
+    states: dict[str, Protomer] = {}
+    coupled = Coupling(ref) if coupling else None
+    for ph in ph_values:
+        by_smiles: dict[str, list] = {}
+        for changes, pop in enumerate_states(sites, ph, margin, max_ambiguous, coupled):
+            probe = apply_changes(isomers[0] if use_isomer else ref, changes,
+                                  isomers[0], stereo)
+            if probe is None:
+                if pop >= min_population:
+                    build_failures += 1
+                continue
+            if probe in by_smiles:
+                by_smiles[probe][1] += pop
+            else:
+                by_smiles[probe] = [changes, pop]
+        found = []
+        for probe, (changes, pop) in by_smiles.items():
+            if pop < min_population:
+                dropped_states += 1
+                continue
+            found.append((changes, pop, probe))
+        found.sort(key=lambda x: (-x[1], x[2]))
+        if len(found) > max_states:
+            dropped_states += len(found) - max_states
+            found = found[:max_states]
+        for changes, pop, probe in found:
+            if probe in states:
+                states[probe].ph_values.append(ph)
+                states[probe].population = max(states[probe].population, pop)
+            else:
+                states[probe] = Protomer(
+                    parent=name, smiles=probe,
+                    charge=Chem.GetFormalCharge(Chem.MolFromSmiles(probe)),
+                    ph_values=[ph], population=pop, changes=changes)
+
+    # 2. apply every surviving state to every stereoisomer
+    emitted: list[Protomer] = []
+    ordered = sorted(states.values(), key=lambda x: (-x.population, x.smiles))
+    for p_idx, state in enumerate(ordered):
+        seen_here: set = set()
+        for k, iso in enumerate(isomers):
+            out_smi = apply_changes(iso if use_isomer else ref, state.changes,
+                                    iso, stereo)
+            if out_smi is None or (k, out_smi) in seen_here:
+                continue
+            seen_here.add((k, out_smi))
+            emitted.append(Protomer(
+                parent=name, smiles=out_smi,
+                charge=Chem.GetFormalCharge(Chem.MolFromSmiles(out_smi)),
+                ph_values=list(state.ph_values), population=state.population,
+                changes=state.changes, stereo_index=k, protomer_index=p_idx,
+                note="" if use_isomer else fallback_note))
+    return emitted, dropped_states, build_failures, use_isomer
 
 
 # --------------------------------------------------------------------------
@@ -820,6 +1352,9 @@ def main(argv=None):
                     help="max protomers kept per molecule per pH (highest population)")
     ap.add_argument("--max-ambiguous", type=int, default=6,
                     help="max simultaneously-enumerated sites (2^N states)")
+    ap.add_argument("--coupling", choices=["on", "off"], default="on",
+                    help="penalize two same-kind sites charged together (diamine/diacid "
+                         "micro-pKa shifts; see Coupling); off = independent sites")
     ap.add_argument("--name-style",
                     choices=["short", "index", "charge", "ph"],
                     default="short",
@@ -839,6 +1374,9 @@ def main(argv=None):
                          "QupKake once per parent, propagate protomers across "
                          "the isomers; 'keep' = trust the SDF's 3D-derived "
                          "tags; 'strip' = flatten")
+    ap.add_argument("--keep-amide-sites", action="store_true",
+                    help="keep QupKake's amide N-H acid / amide N base sites "
+                         "(dropped by default; see IMPLAUSIBLE_SITES)")
     ap.add_argument("--no-neutralize", action="store_true",
                     help="skip input neutralization (QupKake wants neutral input)")
     ap.add_argument("--keep-largest-fragment", action="store_true", default=True)
@@ -853,6 +1391,11 @@ def main(argv=None):
                          "processes (array tasks) instead. Unset in QupKake itself, "
                          "this would be every core on the node.")
     ap.add_argument("--qupkake-exe", default="qupkake")
+    ap.add_argument("--molgpka-sites", default=None, metavar="TSV",
+                    help="the triage's MolGpKa sites for these parents (parent_id, smiles, "
+                         "idx, kind, pka); aromatic N basic sites are taken from it when the "
+                         "molecule has another base (hybrid_aromatic_n). llb reenumerate "
+                         "--molgpka-triage writes it")
     ap.add_argument("--from-sdf", default=None,
                     help="reuse an existing QupKake output SDF; skip prediction")
     ap.add_argument("--max-conf", type=int, default=None,
@@ -918,6 +1461,7 @@ def main(argv=None):
                 fh.write(f"{smi} {name}\n")
 
     # ---- 2. QupKake -------------------------------------------------------
+    unembeddable: list[str] = []
     if args.from_sdf:
         sdf_path = Path(args.from_sdf)
         print(f"[2/5] reusing {sdf_path}")
@@ -929,19 +1473,78 @@ def main(argv=None):
                   f"for {args.nproc} cores. -mp 1 and more processes is faster.",
                   file=sys.stderr)
         work.mkdir(parents=True, exist_ok=True)
+        unembeddable = [n for smi, n in inputs if not qupkake_can_embed(smi)]
+        to_run = [(smi, n) for smi, n in inputs if n not in set(unembeddable)]
+        if unembeddable:
+            print(f"  ! {len(unembeddable)} molecule(s) do not embed the way QupKake's "
+                  f"input step does; left out so the rest of the file runs "
+                  f"(qupkake_failed.tsv, reason qupkake_embed_failed): "
+                  f"{', '.join(unembeddable[:5])}", file=sys.stderr)
         csv_path = work / "qupkake_input.csv"
         with open(csv_path, "w", newline="") as fh:
-            w = csv.writer(fh)
+            w = csv.writer(fh, lineterminator="\n")
             w.writerow(["smiles", "name"])
-            w.writerows([[s, n] for s, n in inputs])
-        sdf_path = run_qupkake(csv_path, work, "qupkake_output.sdf",
-                               args.tautomerize, args.nproc, args.qupkake_exe,
-                               n_mols=len(inputs),
-                               progress_interval=args.progress_interval)
+            w.writerows([[s, n] for s, n in to_run])
+        if to_run:
+            sdf_path = run_qupkake(csv_path, work, "qupkake_output.sdf",
+                                   args.tautomerize, args.nproc, args.qupkake_exe,
+                                   n_mols=len(to_run),
+                                   progress_interval=args.progress_interval)
+        else:
+            # nothing for QupKake: an empty tree the audit reads as all failed
+            for sub in ("output", "processed", "raw"):
+                (work / sub).mkdir(exist_ok=True)
+            sdf_path = work / "output" / "qupkake_output.sdf"
+            sdf_path.write_text("")
 
     grouped = parse_qupkake_sdf(sdf_path)
     n_records = sum(len(s) for _, s in grouped.values())
     print(f"      {n_records} site(s) across {len(grouped)} molecule(s)")
+    dropped_sites = []
+    if not args.keep_amide_sites:
+        for name, (mol, sites) in grouped.items():
+            keep, dropped = filter_sites(mol, sites)
+            dropped_sites += [(name, s.idx, s.kind, s.pka, r) for s, r in dropped]
+            grouped[name] = (mol, keep)
+        if dropped_sites:
+            print(f"      dropped {len(dropped_sites)} implausible site(s): "
+                  f"{dict(Counter(r for *_, r in dropped_sites))} (dropped_sites.tsv)")
+    hybrid_parents: set[str] = set()
+    if args.molgpka_sites:
+        mg_table = read_molgpka_sites(Path(args.molgpka_sites))
+        hybrid_rows, unmapped = [], []
+        for name, (mol, sites) in grouped.items():
+            if name not in mg_table:
+                continue
+            smi, mg = mg_table[name]
+            parent = Chem.MolFromSmiles(smi)
+            to_parent_q = atom_map(mol, parent)
+            to_parent_m = atom_map(molgpka_ref(smi), parent)
+            if to_parent_q is None or to_parent_m is None:
+                unmapped.append(name)
+                continue
+            from_parent_q = {p: q for q, p in to_parent_q.items()}
+            mg_here = [Site(idx=from_parent_q[to_parent_m[s.idx]], kind=s.kind, pka=s.pka)
+                       for s in mg if s.idx in to_parent_m]
+            new_sites, swaps = hybrid_aromatic_n(mol, sites, mg_here)
+            if swaps:
+                grouped[name] = (mol, new_sites)
+                hybrid_parents.add(name)
+                hybrid_rows += [(name, i, q, m) for i, q, m in swaps]
+        with open(outdir / "hybrid_sites.tsv", "w") as fh:
+            fh.write("name\tidx\tqupkake_pka\tmolgpka_pka\n")
+            fh.writelines(f"{n}\t{i}\t{'' if q is None else f'{q:.3f}'}\t"
+                          f"{'' if m is None else f'{m:.3f}'}\n" for n, i, q, m in hybrid_rows)
+        print(f"      aromatic N from MolGpKa in {len(hybrid_parents)} molecule(s) with another "
+              f"base ({len(hybrid_rows)} site(s), hybrid_sites.tsv)"
+              + (f"; {len(unmapped)} could not be mapped, kept QupKake's" if unmapped else ""))
+    (outdir / "site_filter.txt").write_text(
+        f"site_filter_version={'off' if args.keep_amide_sites else SITE_FILTER_VERSION}\n"
+        f"coupling={COUPLING_VERSION if args.coupling == 'on' else 'off'}\n"
+        f"aromatic_n={'molgpka_hybrid_' + AROMATIC_N_VERSION if args.molgpka_sites else 'qupkake'}\n")
+    with open(outdir / "dropped_sites.tsv", "w") as fh:
+        fh.write("name\tidx\tkind\tpka\treason\n")
+        fh.writelines(f"{n}\t{i}\t{k}\t{p:.3f}\t{r}\n" for n, i, k, p, r in dropped_sites)
 
     qk_failed = audit_qupkake(sdf_path.parent.parent, sdf_path.name,
                               [n for _, n in inputs], grouped)
@@ -950,7 +1553,9 @@ def main(argv=None):
         print("  ! no QupKake working tree next to the SDF: cannot tell a crashed "
               "molecule from one with no sites, so both pass through as "
               "no_sites_predicted", file=sys.stderr)
-    elif qk_failed:
+    for n in unembeddable:
+        qk_failed[n] = "qupkake_embed_failed"
+    if qk_failed:
         print(f"  ! QupKake failed on {len(qk_failed)} molecule(s) "
               f"({Counter(qk_failed.values())}); excluded, see qupkake_failed.tsv. "
               f"Details in {sdf_path.parent.parent / 'logs'}", file=sys.stderr)
@@ -971,76 +1576,23 @@ def main(argv=None):
         if name in qk_failed:
             continue
         isomers = stereo_sets[name]
-        emitted: list[Protomer] = []
 
         if name not in grouped:
-            # no ionizable site predicted -- carry each isomer through unchanged
-            for k, iso in enumerate(isomers):
-                iso_smi = Chem.MolToSmiles(iso)
-                emitted.append(Protomer(
-                    parent=name, smiles=iso_smi,
-                    charge=Chem.GetFormalCharge(iso),
-                    ph_values=list(args.ph), population=1.0,
-                    note="no_sites_predicted", stereo_index=k))
-            by_parent[name] = emitted
+            by_parent[name] = unchanged_protomers(name, isomers, args.ph)
             continue
 
         ref, sites = grouped[name]
-
-        # Build on the isomer itself where possible: it already carries the
-        # right stereo in QupKake's own atom order, so nothing has to be
-        # transferred and E/Z survives.  Fall back to the QupKake skeleton
-        # (with stereo reconciliation) when -t rewrote the molecule.
-        use_isomer = skeleton_matches(ref, isomers[0])
-        if not use_isomer:
+        emitted, n_drop, n_fail, used_isomer = build_protomers(
+            name, isomers, ref, sites, args.ph, args.margin, args.min_population,
+            args.max_states, args.max_ambiguous, args.stereo,
+            coupling=args.coupling == "on")
+        if name in hybrid_parents:
+            for p in emitted:
+                p.note = ";".join(x for x in (p.note, "aromatic_n_from_molgpka") if x)
+        dropped_states += n_drop
+        build_failures += [name] * n_fail
+        if not used_isomer:
             fallback_parents.append(name)
-
-        # 3a. collect unique protonation STATES for the parent, judged on the
-        #     first isomer so a state gets one index across every isomer
-        states: dict[tuple, Protomer] = {}
-        for ph in args.ph:
-            found = []
-            for changes, pop in enumerate_states(sites, ph, args.margin,
-                                                 args.max_ambiguous):
-                if pop < args.min_population:
-                    dropped_states += 1
-                    continue
-                probe = apply_changes(isomers[0] if use_isomer else ref, changes,
-                                      isomers[0], args.stereo)
-                if probe is None:
-                    build_failures.append(name)
-                    continue
-                found.append((changes, pop, probe))
-            found.sort(key=lambda x: -x[1])
-            if len(found) > args.max_states:
-                dropped_states += len(found) - args.max_states
-                found = found[:args.max_states]
-            for changes, pop, probe in found:
-                if changes in states:
-                    states[changes].ph_values.append(ph)
-                    states[changes].population = max(states[changes].population, pop)
-                else:
-                    states[changes] = Protomer(
-                        parent=name, smiles=probe,
-                        charge=Chem.GetFormalCharge(Chem.MolFromSmiles(probe)),
-                        ph_values=[ph], population=pop, changes=changes)
-
-        # 3b. apply every surviving state to every stereoisomer
-        ordered = sorted(states.values(), key=lambda x: (-x.population, x.smiles))
-        for p_idx, state in enumerate(ordered):
-            seen_here: set[str] = set()
-            for k, iso in enumerate(isomers):
-                out_smi = apply_changes(iso if use_isomer else ref, state.changes,
-                                        iso, args.stereo)
-                if out_smi is None or (k, out_smi) in seen_here:
-                    continue
-                seen_here.add((k, out_smi))
-                emitted.append(Protomer(
-                    parent=name, smiles=out_smi,
-                    charge=Chem.GetFormalCharge(Chem.MolFromSmiles(out_smi)),
-                    ph_values=list(state.ph_values), population=state.population,
-                    changes=state.changes, stereo_index=k, protomer_index=p_idx,
-                    note="" if use_isomer else "built_on_qupkake_tautomer"))
         by_parent[name] = emitted
 
     # ---- 4. name + write --------------------------------------------------
@@ -1067,17 +1619,9 @@ def main(argv=None):
                 fh.write(f"{p.smiles} {p.name}\n")
 
     with open(outdir / "protomers.csv", "w", newline="") as fh:
-        w = csv.writer(fh)
-        w.writerow(["protomer_name", "parent_name", "smiles", "net_charge",
-                    "n_pos_atoms", "n_neg_atoms", "zwitterion", "ph_values",
-                    "population_estimate", "n_changes", "protomer_index",
-                    "stereo_index", "note"])
-        for p in protomers:
-            w.writerow([p.name, p.parent, p.smiles, p.charge, p.n_pos, p.n_neg,
-                        int(p.is_zwitterion),
-                        ";".join(f"{v:g}" for v in sorted(set(p.ph_values))),
-                        f"{p.population:.4f}", len(p.changes),
-                        p.protomer_index, p.stereo_index, p.note])
+        w = csv.writer(fh, lineterminator="\n")
+        w.writerow(PROTOMER_COLUMNS)
+        w.writerows(protomer_row(p) for p in protomers)
 
     with open(outdir / "name_map.tsv", "w") as fh:
         fh.write("protomer_name\tparent_name\tnet_charge\tph_values"
@@ -1102,12 +1646,15 @@ def main(argv=None):
     }
     stats["input"]["molecules_rejected"] = len(failed)
     stats["input"]["qupkake_failed"] = dict(Counter(qk_failed.values()))
+    stats["input"]["sites_dropped_as_implausible"] = dict(
+        Counter(r for *_, r in dropped_sites))
     stats["input"]["states_failed_to_build"] = len(build_failures)
     stats["input"]["parents_on_qupkake_skeleton"] = len(set(fallback_parents))
     stats["protomers"]["states_dropped_by_filters"] = dropped_states
     stats["settings"] = {"ph": args.ph, "margin": args.margin,
                          "min_population": args.min_population,
                          "max_states": args.max_states,
+                         "coupling": COUPLING_VERSION if args.coupling == "on" else "off",
                          "tautomerize": args.tautomerize,
                          "name_style": args.name_style,
                          "stereo": args.stereo,
