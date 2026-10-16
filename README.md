@@ -46,6 +46,23 @@ politely, and the gotchas that actually happened),
 [run_qupkake/README.md](run_qupkake/README.md) (how protonation states are chosen),
 [mol_compiler/README.md](mol_compiler/README.md) (the db2 record model and chunking).
 
+## One command: `llb pipeline`
+
+    llb pipeline start samples/H*.smi -o lib_h18_22          # returns at once
+    llb pipeline status lib_h18_22
+
+Runs parents -> triage -> QupKake -> reenumerate/merge -> names -> checks -> db2 ->
+verify as chained SLURM jobs (a small control job after each stage checks its
+outputs and submits the next), and stops at verified db2s. Every stage has a stop
+threshold (loss rate above which it halts and mails `LLB_MAIL`); failed or
+timed-out tasks are retried once at twice the time. `RUN/ledger.tsv` has one row
+per input molecule and its fate, `RUN/attrition.tsv` the counts per stage and
+heavy-atom bin, `RUN/REPORT.md` the summary with settings, versions and cost.
+`--validate` also runs QupKake on every parent and `llb compare`; `--set
+key=value` changes a setting (`qupkake_time=00:45:00`, `stop.db2=0.08`).
+After a stop: look, then `llb pipeline resume RUN [--set ...]`. Design and
+thresholds: `docs/PIPELINE_DESIGN.md`.
+
 ## Tests
 
 `tests/` covers the library-build logic: the site filter, coupled states, the

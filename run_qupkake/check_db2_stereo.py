@@ -99,8 +99,14 @@ def main(argv=None) -> int:
     print(f"{n:,} SMILES checked with db2_converter.rdk_enumerate_smi (RDKit {rdBase.rdkitVersion})")
     if badname:
         print(f"  [FAIL] {len(badname):,} name(s) not in contract form, e.g. {badname[:3]}")
+    # every split name, not just the ten printed (llb pipeline excludes them all)
+    split_path = Path(args.smi).with_name(Path(args.smi).stem + ".stereo_split.tsv")
+    with open(split_path, "w") as fh:
+        fh.write("name\tn_isomers\tsmiles\n")
+        fh.writelines(f"{a}\t{k}\t{b}\n" for a, k, b in split)
     if split:
-        print(f"  [FAIL] {len(split):,} SMILES would be renamed NAME.<i> by --checkstereo:")
+        print(f"  [FAIL] {len(split):,} SMILES would be renamed NAME.<i> by --checkstereo "
+              f"(all in {split_path}):")
         for name, k, smi in split[:10]:
             print(f"           {name}  {k} isomer(s)  {smi}")
         print("         Re-run `llb names` with an RDKit of THIS version (PREP_ENV in "
@@ -111,11 +117,11 @@ def main(argv=None) -> int:
               f"(a wasted dock, not a split leak):")
         for name, a, b in unstable[:5]:
             print(f"           {name}  {a}\n                             -> {b}")
+    out = Path(args.smi).with_name(Path(args.smi).stem + ".stereo_crashed.tsv")
+    with open(out, "w") as fh:                   # written even when empty: a clean run
+        fh.write("name\tsmiles\terror\n")
+        fh.writelines(f"{a}\t{b}\t{c}\n" for a, b, c in crashed)
     if crashed:
-        out = Path(args.smi).with_name(Path(args.smi).stem + ".stereo_crashed.tsv")
-        with open(out, "w") as fh:
-            fh.write("name\tsmiles\terror\n")
-            fh.writelines(f"{a}\t{b}\t{c}\n" for a, b, c in crashed)
         print(f"  [warn] {len(crashed):,} SMILES crash RDKit's stereo enumeration; "
               f"build_ligand will skip them (logged 'cannot be parsed', no db2). "
               f"All in {out}; first 10:")

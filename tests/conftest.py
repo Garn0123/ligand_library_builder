@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-for sub in ("run_qupkake", "pka_triage"):
+for sub in ("run_qupkake", "pka_triage", "pipeline"):
     sys.path.insert(0, str(ROOT / sub))
 
 

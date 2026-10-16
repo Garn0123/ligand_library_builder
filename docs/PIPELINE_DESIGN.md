@@ -85,12 +85,28 @@ anything stopped and resumed: the page to attach to a methods section.
 - A tiny `llb versions` that prints every version above as JSON (run once per
   env at `start`).
 
-## Questions for review
+## Settled in review (2026-10-16)
 
-1. Should the pipeline also run the mol2 outputs (`llb mol2`, `llb mol2-library`)
-   and/or `llb chunk` as stages 9-10, or stop at verified db2s?
-2. Are the stop thresholds right (1% at parents/triage, 5% parent loss at names
-   and at the end)?
-3. Email on stop and on finish (`--mail-type` to your umich address)?
-4. Batch per heavy-atom range (as in today's H18-22 / H23-30 runs) by hand, or
-   should `start` split one big input into libraries itself?
+1. The pipeline stops at verified db2s. `REPORT.md` and the final `status` print the
+   `llb mol2` / `llb mol2-library` commands for that run.
+2. **Stop threshold** = the loss rate at a stage above which the pipeline halts
+   instead of recording and continuing. Set at a bit over twice what the drug-like
+   10k measured; per run, `--set stop.<stage>=<fraction>` overrides one.
+
+   | stage | counts as lost | measured (10k) | stop above |
+   | --- | --- | --- | --- |
+   | parents | inputs rejected (unparsable, id conflicts; not duplicates) | 0% | 1% |
+   | triage | parents MolGpKa failed on | 0% | 1% |
+   | qupkake | routed parents QupKake failed on (they fall back to MolGpKa) | 2.0% | 10% |
+   | names | parents with no name | ~0.04% | 2% |
+   | checks | names excluded by check-stereo | 0.03% | 0.5% |
+   | db2 | named parents with nothing built | 2.0% | 5% |
+   | end to end | input parents with no db2 | 2.0% | 5% |
+
+3. Email on stop and on finish to `LLB_MAIL` from `hpc.env` (none if empty): every
+   control job carries `--mail-type=FAIL` (a stop exits non-zero), the last one
+   `END,FAIL`.
+4. One library per `start`; batching by heavy-atom range stays manual.
+
+Not built yet: submitting in waves. `start` refuses an array over 4,500 tasks
+(`MaxSubmit` is 5,000), which today's batches stay under.

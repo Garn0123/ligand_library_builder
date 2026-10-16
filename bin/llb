@@ -29,6 +29,7 @@
 #   llb compare ARGS          pka_triage/compare.py  (MolGpKa vs QupKake)     (PKA)
 #   llb pka-reference QK_DIR  pka_triage/reference_check.py (aromatic N vs measured) (PKA)
 #   llb collapse-invertomers SCORES --library library.tsv -o OUT   best score per N-H+ invertomer group (PKA)
+#   llb pipeline start SMILES... -o RUN   parents -> ... -> verified db2s, chained SLURM jobs (no env)
 #   llb timing DIR...         cost of a run: triage / QupKake / db2 (no env)
 #   llb submit-qupkake PARENTS OUT [sbatch args]                         (logs -> ./logs)
 #   llb reenumerate PARENTS QK_IN QK_OUT  rebuild protomers from QupKake's SDFs (PREP)
@@ -87,6 +88,7 @@ case "$step" in
     compare)        exec "$W" PKA python "$LLB_ROOT/pka_triage/compare.py" "$@" ;;
     pka-reference)  exec "$W" PKA python "$LLB_ROOT/pka_triage/reference_check.py" "$@" ;;
     collapse-invertomers) exec "$W" PKA python "$Q/collapse_invertomers.py" "$@" ;;
+    pipeline)       exec python3 "$LLB_ROOT/pipeline/llb_pipeline.py" "$@" ;;
     timing)         exec python3 "$Q/timing_report.py" "$@" ;;
     submit-qupkake) exec "$Q/submit_qupkake.sh" "$@" ;;
     reenumerate)    exec "$W" PREP python "$Q/reenumerate.py" "$@" ;;
