@@ -1,0 +1,15 @@
+
+== triage druglike_10k_v2/triage_v6: 1000 finished shard(s)
+  10,000 parents in 107.4 s: 10.7 ms per parent
+
+== QupKake druglike_10k_v2/protomers_qk: 358 finished shard(s)
+  3,578 parents, 31.65 CPU-h: 31.8 s per parent overall; per shard median 30.8 s, p90 41.6 s
+  slowest shard shard_00335: 11.9 min for 10 parents (size --time from this, with headroom)
+
+== db2 build druglike_10k_v2/db2_run_v6: 18,677 molecule(s) timed, from 1000 shard file(s)
+  time per molecule: median 45.8 s, p90 87.1 s, max 482.1 s; total 268.30 CPU-h
+  built 18,471 of 18,677 (98.9%); failures: 3chemistrycheck 179, 1generate 27
+  conformers produced (n_out): 0 0, 1-24 291, 25-99 969, 100-299 3479, 300+ 13732  -> 1.6% under 25
+  db2.gz size: median 476 KB, mean 506 KB, total 8.92 GB
+  per 100k molecules at these rates: 1,437 CPU-h, 48 GB of db2
+  by heavy atoms: H18: 36s (n=1029)  H19: 40s (n=1598)  H20: 42s (n=2978)  H21: 47s (n=4589)  H22: 49s (n=8483)
