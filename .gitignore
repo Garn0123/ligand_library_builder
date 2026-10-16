@@ -213,3 +213,6 @@ urls_2d.txt
 
 # SLURM logs.
 logs/
+
+# validation records keep their run-output folder names (library/, parents/, ...)
+!validation/**/
