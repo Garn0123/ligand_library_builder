@@ -11,7 +11,7 @@ If they disagree, this file and the code are what to check, and the
 disagreement is a bug to fix.
 
 Draft of 2026-10-16, against `main` at `915b93c` (PR #1 merge); evidence
-files from branch `data/validation-2026-10` (`86f535a`).
+files from branch `data/validation-2026-10` (`5b64a1f`).
 
 ## How to read an entry
 
@@ -49,7 +49,7 @@ found for the decisions that rested on chemistry knowledge.
 
 Measured numbers name the run they came from. The small summary files from the
 two validation runs are in this repo under `validation/2026-10_druglike10k/` (branch
-`data/validation-2026-10`, commit `86f535a`; its README gives the run and code
+`data/validation-2026-10`, commit `5b64a1f`; its README gives the run and code
 state behind each file). Paths below are relative to the repo root. Numbers
 marked *read off the terminal* were read from a run's console output at the
 time and are not in those files; they can be recomputed from the run
@@ -59,7 +59,7 @@ on Great Lakes) until scratch purges them.
 | run | what it is | evidence files |
 | --- | --- | --- |
 | **Owen's 50** | 50 large, flexible, peptide-like molecules from a collaborator (up to 39 heavy atoms), non-ZINC names; first real QupKake + triage + db2 run, 2026-10-08 to 10-14 | none; *read off the terminal* |
-| **druglike_10k (v1)** | 10,000 ZINC22 2D parents, H18–H22, one pooled uniform draw (seed 20260923); QupKake on all 10k; site filter v3 then v4, coupling off then on; 2026-10-15 | `validation/2026-10_druglike10k/druglike_10k/triage/stats.json`, `validation/2026-10_druglike10k/druglike_10k/compare/` (summary.json, sites.tsv, parents.tsv, window.png, scatter.png), `validation/2026-10_druglike10k/druglike_10k/db2_verification.csv`, `validation/2026-10_druglike10k/druglike_10k/ref_qk/reference_check.tsv` |
+| **druglike_10k (v1)** | 10,000 ZINC22 2D parents, H18–H22, one pooled uniform draw (seed 20260923); QupKake on all 10k; site filter v3 then v4, coupling off then on; 2026-10-15 | `validation/2026-10_druglike10k/druglike_10k/triage/stats.json`, `validation/2026-10_druglike10k/druglike_10k/parents/rejected.tsv`, `validation/2026-10_druglike10k/druglike_10k/library/stats.json`, `validation/2026-10_druglike10k/druglike_10k/compare/` (summary.json, sites.tsv, parents.tsv, window.png, scatter.png), `validation/2026-10_druglike10k/druglike_10k/db2_verification.csv`, `validation/2026-10_druglike10k/druglike_10k/ref_qk/reference_check.tsv` |
 | **druglike_10k_v2 (v6, v6b)** | same 10,000 parents rebuilt with every fix through site filter v6, aromatic-N v2, the escalated 3D check; QupKake on the routed 35.8% only; `library_v6` before and `library_v6b` after the last-isomer guard; 2026-10-16 | `validation/2026-10_druglike10k/druglike_10k_v2/triage_v6/stats.json`, `validation/2026-10_druglike10k/druglike_10k_v2/library_v6b/stats.json`, `validation/2026-10_druglike10k/druglike_10k_v2/library_v6b/dropped.tsv`, `validation/2026-10_druglike10k/druglike_10k_v2/db2_verification_v6b.csv`, `validation/2026-10_druglike10k/druglike_10k_v2/timing_v6.txt`, `validation/2026-10_druglike10k/druglike_10k_v2/regressed.txt` |
 | **aromatic-N reference** | 53 molecules in `pka_triage/reference/aromatic_n_bases.{smi,tsv}` through QupKake and MolGpKa (`llb pka-reference`), run inside druglike_10k | `validation/2026-10_druglike10k/druglike_10k/ref_qk/reference_check.tsv` |
 
@@ -702,7 +702,8 @@ for the minority that were not.
   `CCN(C)Cc1ccccc1` 1 isomer, `CC[NH+](C)Cc1ccccc1` 2, `C[C@H]1CC[NH+](C)CC1` 2.
   db2_converter would rename these `NAME.0/NAME.1`, and mol2db2 keeps the last
   16 characters, breaking the contract inside the db2. druglike_10k v1: closure
-  added 5,499 isomers (1,828 of them N-H+ invertomers); v6b: 19,102 names,
+  added 5,499 isomers (1,828 of them N-H+ invertomers;
+  `validation/2026-10_druglike10k/druglike_10k/library/stats.json`); v6b: 19,102 names,
   0 renamed in the db2 (`validation/2026-10_druglike10k/druglike_10k_v2/db2_verification_v6b.csv`). One name per run still
   differs in perception between the naming and db2_converter environments
   (`Cm50000037lNj10C`) and is excluded by hand (see open items).
@@ -887,7 +888,7 @@ for the minority that were not.
 - **Commits.** `5e728fd` (`invertomer_of`), `f6578cf` (LLB collapse); DRAP
   `1e2ea63`.
 - **Evidence.** v1: 1,828 of 22,613 names (8.1%) are invertomers of another row
-  (*read off the terminal*; v1's `library/stats.json` was not copied); v6b:
+  (`validation/2026-10_druglike10k/druglike_10k/library/stats.json`); v6b:
   1,471 of 19,102 (7.7%; `validation/2026-10_druglike10k/druglike_10k_v2/library_v6b/stats.json`). The two are different 3D shapes for
   docking (a piperidinium substituent axial or equatorial; the N-H donor
   pointing one way or the other); in water they interconvert (deprotonate,
@@ -919,7 +920,7 @@ for the minority that were not.
 - **Restrained MMFF parameters** were chosen on Owen's set, not scanned (9.1).
 - **Evidence gaps.** Numbers marked *read off the terminal* have no file in
   `validation/2026-10_druglike10k/`; the missing ones that matter most are `compare_c/summary.json`
-  (the coupled window curve), v1's `library/stats.json` and `llb timing`
+  (the coupled window curve), v1's `llb timing`
   output, the `db2_fallback` timing, `POOLED.done`,
   `library_v6/library.stereo_crashed.tsv`, the merged charge spreads, the 735
   aromatic-N swaps and the per-parent loss breakdowns.
