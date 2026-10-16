@@ -73,3 +73,5 @@ def test_standardize_keeps_dipoles_and_zwitterions_neutral(smi):
 def test_qupkake_embed_precheck():
     assert qupkake_can_embed("CCN1CCN(C)CC1")
     assert not qupkake_can_embed("[C@@H]12C[C@H]1C2")   # impossible bicyclobutane
+    # fails ~half of all embeds; passed 3 seeds and crashed a shard of the 50k run twice
+    assert not qupkake_can_embed("Cc1noc([C@H](C)NC[C@@]23COCC[C@H]2C3(F)F)n1")

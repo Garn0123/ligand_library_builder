@@ -87,6 +87,24 @@ def test_qupkake_wrapper_leaves_out_unembeddable_and_filters(tmp_path, fake_qupk
     assert max(pip) <= 2 and 1 in pip
 
 
+def test_qupkake_wrapper_retries_once_after_a_crash(tmp_path, fake_qupkake):
+    # QupKake's unseeded embed can miss a molecule the screen let through; the
+    # wrapper rescreens with 100 tries and runs once more on a clean folder
+    flaky = tmp_path / "flaky_qupkake"
+    marker = tmp_path / "crashed_once"
+    flaky.write_text(f"""#!/bin/sh
+if [ ! -e {marker} ]; then touch {marker}; echo 'ValueError: Bad Conformer Id' >&2; exit 1; fi
+exec {fake_qupkake} "$@"
+""")
+    flaky.chmod(0o755)
+    (tmp_path / "in.smi").write_text("CCN guan\nC1CNCCN1 pip\n")
+    qupkake_protomers.main([str(tmp_path / "in.smi"), "-o", str(tmp_path / "qk"),
+                            "--qupkake-exe", str(flaky), "--name-style", "index"])
+    assert marker.exists()
+    rows = read_csv(tmp_path / "qk" / "protomers.csv")
+    assert {r["parent_name"] for r in rows} == {"guan", "pip"}
+
+
 @pytest.mark.molgpka
 def test_end_to_end_with_aromatic_n_hybrid(tmp_path, fake_qupkake):
     import merge_protomers, reenumerate, triage, assign_names

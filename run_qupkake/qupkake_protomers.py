@@ -44,6 +44,7 @@ import math
 import os
 import re
 import shlex
+import shutil
 import statistics
 import subprocess
 import sys
@@ -575,7 +576,7 @@ class QupKakeProgress:
         return False
 
 
-def qupkake_can_embed(smi: str, tries: int = 3) -> bool:
+def qupkake_can_embed(smi: str, tries: int = 20) -> bool:
     """Would QupKake's own input step get through this molecule?
 
     `qupkake file x.csv` first embeds every row (cli.embed_molecule: AddHs,
@@ -584,7 +585,9 @@ def qupkake_can_embed(smi: str, tries: int = 3) -> bool:
     exits before processing ANY molecule in the file: on the drug-like 10k,
     189 of 1,000 ten-molecule shards died this way. Same calls here, in the same
     environment; QupKake's embed is unseeded, so a molecule must embed under
-    every one of `tries` seeds to be sent.
+    every one of `tries` seeds to be sent. 20, not 3: a difluorocyclopropane-
+    fused ring that fails half of all embeds passed 3 seeds and crashed a
+    50k-parent run's shard twice (2026-10-16); 20 lets that through ~1 in 10^6.
     """
     from rdkit.Chem import AllChem
     mol = Chem.MolFromSmiles(smi)
@@ -1473,24 +1476,39 @@ def main(argv=None):
                   f"for {args.nproc} cores. -mp 1 and more processes is faster.",
                   file=sys.stderr)
         work.mkdir(parents=True, exist_ok=True)
-        unembeddable = [n for smi, n in inputs if not qupkake_can_embed(smi)]
-        to_run = [(smi, n) for smi, n in inputs if n not in set(unembeddable)]
-        if unembeddable:
-            print(f"  ! {len(unembeddable)} molecule(s) do not embed the way QupKake's "
-                  f"input step does; left out so the rest of the file runs "
-                  f"(qupkake_failed.tsv, reason qupkake_embed_failed): "
-                  f"{', '.join(unembeddable[:5])}", file=sys.stderr)
-        csv_path = work / "qupkake_input.csv"
-        with open(csv_path, "w", newline="") as fh:
-            w = csv.writer(fh, lineterminator="\n")
-            w.writerow(["smiles", "name"])
-            w.writerows([[s, n] for s, n in to_run])
-        if to_run:
-            sdf_path = run_qupkake(csv_path, work, "qupkake_output.sdf",
-                                   args.tautomerize, args.nproc, args.qupkake_exe,
-                                   n_mols=len(to_run),
-                                   progress_interval=args.progress_interval)
-        else:
+        # QupKake dies on the first molecule its unseeded embed misses. Screen with
+        # 20 seeds; if it still dies, screen again with 100 (anything that failed
+        # once is left out) and run once more on a clean working folder.
+        unembeddable: list[str] = []
+        for tries in (20, 100):
+            unembeddable = [n for smi, n in inputs if not qupkake_can_embed(smi, tries)]
+            to_run = [(smi, n) for smi, n in inputs if n not in set(unembeddable)]
+            if unembeddable:
+                print(f"  ! {len(unembeddable)} molecule(s) do not embed reliably the way "
+                      f"QupKake's input step does ({tries} tries); left out so the rest of "
+                      f"the file runs (qupkake_failed.tsv, reason qupkake_embed_failed): "
+                      f"{', '.join(unembeddable[:5])}", file=sys.stderr)
+            csv_path = work / "qupkake_input.csv"
+            with open(csv_path, "w", newline="") as fh:
+                w = csv.writer(fh, lineterminator="\n")
+                w.writerow(["smiles", "name"])
+                w.writerows([[s, n] for s, n in to_run])
+            if not to_run:
+                break
+            try:
+                sdf_path = run_qupkake(csv_path, work, "qupkake_output.sdf",
+                                       args.tautomerize, args.nproc, args.qupkake_exe,
+                                       n_mols=len(to_run),
+                                       progress_interval=args.progress_interval)
+                break
+            except RuntimeError:
+                if tries == 100:
+                    raise
+                print("  ! QupKake exited; rescreening with 100 tries and retrying once",
+                      file=sys.stderr)
+                for sub in ("raw", "processed", "output", "logs"):
+                    shutil.rmtree(work / sub, ignore_errors=True)
+        if not to_run:
             # nothing for QupKake: an empty tree the audit reads as all failed
             for sub in ("output", "processed", "raw"):
                 (work / sub).mkdir(exist_ok=True)
