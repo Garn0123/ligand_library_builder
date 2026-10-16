@@ -10,7 +10,8 @@ operational detail; code comments repeat the short form next to each constant.
 If they disagree, this file and the code are what to check, and the
 disagreement is a bug to fix.
 
-Draft of 2026-10-16, against `main` at `915b93c` (PR #1 merge).
+Draft of 2026-10-16, against `main` at `915b93c` (PR #1 merge); evidence
+files from branch `data/validation-2026-10` (`86f535a`).
 
 ## How to read an entry
 
@@ -47,28 +48,30 @@ found for the decisions that rested on chemistry knowledge.
 ## Runs cited
 
 Measured numbers name the run they came from. The small summary files from the
-two validation runs are being copied into this repo under
-`validation/2026-10_druglike10k/`, keeping their run-directory paths
-(**pending copy**; the file names below are the expected ones from the copy
-command). Numbers marked *transcript only* were read off the run's console
-output during the work and have no file in that set yet.
+two validation runs are in this repo under `validation/2026-10_druglike10k/` (branch
+`data/validation-2026-10`, commit `86f535a`; its README gives the run and code
+state behind each file). Paths below are relative to the repo root. Numbers
+marked *read off the terminal* were read from a run's console output at the
+time and are not in those files; they can be recomputed from the run
+directories (`/scratch/maom_root/maom99/johnbick/2026_10_08_build_small_mols/druglike_10k{,_v2}`
+on Great Lakes) until scratch purges them.
 
-| run | what it is | evidence files (expected, pending copy) |
+| run | what it is | evidence files |
 | --- | --- | --- |
-| **Owen's 50** | 50 large, flexible, peptide-like molecules from a collaborator (up to 39 heavy atoms), non-ZINC names; first real QupKake + triage + db2 run, 2026-10-08 to 10-14 | none in the set; console output only (*transcript only*) |
-| **druglike_10k (v1)** | 10,000 ZINC22 2D parents, H18–H22, one pooled uniform draw (seed 20260923); QupKake on all 10k; site filter v3 then v4, coupling off then on; 2026-10-15 | `druglike_10k/compare/` (summary.json, sites.tsv, parents.tsv), `druglike_10k/triage/stats.json`, `druglike_10k/library/stats.json`, `druglike_10k/db2_verification.csv`, `druglike_10k/parents/rejected.tsv`, `druglike_10k/ref_qk/reference_check.tsv` |
-| **druglike_10k_v2 (v6, v6b)** | same 10,000 parents rebuilt with every fix through site filter v6, aromatic-N v2, the escalated 3D check; QupKake on the routed 35.8% only; `library_v6` before and `library_v6b` after the last-isomer guard; 2026-10-16 | `druglike_10k_v2/triage_v6/stats.json`, `druglike_10k_v2/library_v6b/stats.json`, `druglike_10k_v2/library_v6b/dropped.tsv`, `druglike_10k_v2/db2_verification_v6b.csv`, `druglike_10k_v2/timing_v6.txt`, `druglike_10k_v2/regressed.txt` |
-| **aromatic-N reference** | 53 molecules in `pka_triage/reference/aromatic_n_bases.{smi,tsv}` through QupKake and MolGpKa (`llb pka-reference`), run inside druglike_10k | `druglike_10k/ref_qk/reference_check.tsv` |
+| **Owen's 50** | 50 large, flexible, peptide-like molecules from a collaborator (up to 39 heavy atoms), non-ZINC names; first real QupKake + triage + db2 run, 2026-10-08 to 10-14 | none; *read off the terminal* |
+| **druglike_10k (v1)** | 10,000 ZINC22 2D parents, H18–H22, one pooled uniform draw (seed 20260923); QupKake on all 10k; site filter v3 then v4, coupling off then on; 2026-10-15 | `validation/2026-10_druglike10k/druglike_10k/triage/stats.json`, `validation/2026-10_druglike10k/druglike_10k/compare/` (summary.json, sites.tsv, parents.tsv, window.png, scatter.png), `validation/2026-10_druglike10k/druglike_10k/db2_verification.csv`, `validation/2026-10_druglike10k/druglike_10k/ref_qk/reference_check.tsv` |
+| **druglike_10k_v2 (v6, v6b)** | same 10,000 parents rebuilt with every fix through site filter v6, aromatic-N v2, the escalated 3D check; QupKake on the routed 35.8% only; `library_v6` before and `library_v6b` after the last-isomer guard; 2026-10-16 | `validation/2026-10_druglike10k/druglike_10k_v2/triage_v6/stats.json`, `validation/2026-10_druglike10k/druglike_10k_v2/library_v6b/stats.json`, `validation/2026-10_druglike10k/druglike_10k_v2/library_v6b/dropped.tsv`, `validation/2026-10_druglike10k/druglike_10k_v2/db2_verification_v6b.csv`, `validation/2026-10_druglike10k/druglike_10k_v2/timing_v6.txt`, `validation/2026-10_druglike10k/druglike_10k_v2/regressed.txt` |
+| **aromatic-N reference** | 53 molecules in `pka_triage/reference/aromatic_n_bases.{smi,tsv}` through QupKake and MolGpKa (`llb pka-reference`), run inside druglike_10k | `validation/2026-10_druglike10k/druglike_10k/ref_qk/reference_check.tsv` |
 
 Headline result of the pipeline as it stands (druglike_10k_v2, v6b): 9,797 of
 10,000 parents built (98.0%); 18,620 of 19,102 contract names built; 0 charge
 mismatches between library and db2; 135 parents lost because no stereoisomer
 as ZINC specifies it can be built, 65 to conformator/chemistry-check failures,
-3 to stereo-enumeration crashes or skipped names (`db2_verification_v6b.csv`,
-`library_v6b/dropped.tsv`; per-parent split *transcript only*). Cost per 100k
+3 to stereo-enumeration crashes or skipped names (`validation/2026-10_druglike10k/druglike_10k_v2/db2_verification_v6b.csv`,
+`validation/2026-10_druglike10k/druglike_10k_v2/library_v6b/dropped.tsv`; per-parent split *read off the terminal*). Cost per 100k
 parents at H18–H22: ~320 CPU-h QupKake (35.8% routed, 31.8 s/parent) +
 ~2,700 CPU-h db2 (1.91 names/parent, mean ~52 s/name), ~90 GB of db2
-(`timing_v6.txt`).
+(`validation/2026-10_druglike10k/druglike_10k_v2/timing_v6.txt`).
 
 ## Versions in force
 
@@ -159,8 +162,7 @@ ACS/RSC pages were not bypassed). Notes and downloaded copies:
 - **Governs.** `llb sample --total N` (`sample_local_pooled`; writes
   `POOLED.done` with each bin's population and draw).
 - **Commits.** `690f304`.
-- **Evidence.** Draw recorded in `POOLED.done` (*transcript only*; not in the
-  evidence set): population 3,797,772,950; H18 529, H19 865, H20 1,576, H21
+- **Evidence.** Draw recorded in `POOLED.done` (*read off the terminal*): population 3,797,772,950; H18 529, H19 865, H20 1,576, H21
   2,455, H22 4,575. Tested before use on a synthetic tree of bins of 1,000 /
   3,000 / 6,000: a draw of 1,000 gave 91 / 296 / 613, mean over 20 seeds
   96 / 303 / 600.
@@ -213,12 +215,12 @@ ACS/RSC pages were not bypassed). Notes and downloaded copies:
   where both tools reproduce these to within 0.5 alone). *Build:* the `=NH`
   bond crashes RDKit 2024.03.5's `EnumerateStereoisomers` ("Range Error idx2":
   no atom to define E/Z), and db2_converter then skips the molecule. On
-  druglike_10k v1, 247 names crashed check-stereo and had no db2 (*transcript
-  only*: `library.stereo_crashed.tsv`, not in the evidence set; the 248
-  `MISSING` in `druglike_10k/db2_verification.csv` are these plus one
+  druglike_10k v1, 247 names crashed check-stereo and had no db2 (*read off the
+  terminal*: `library.stereo_crashed.tsv` was not copied; the 248
+  `MISSING` in `validation/2026-10_druglike10k/druglike_10k/db2_verification.csv` are these plus one
   hand-excluded name). In v2, 65 of 10,000 parents were converted, none
   duplicating another parent; stereo-crash names fell from 247 to 5 (with
-  site filter v5/v6; *transcript only*).
+  site filter v5/v6; *read off the terminal*).
 - **Alternatives.** *QupKake's own tautomer search* (`-t`, xtb): rejected as much
   slower, and it rewrites the skeleton, breaking the atom-order correspondence
   the stereo carry-over relies on. *A general canonical-tautomer step* (RDKit's
@@ -241,7 +243,7 @@ ACS/RSC pages were not bypassed). Notes and downloaded copies:
   tautomer score).
 - **Commits.** `ba0b54d`.
 - **Evidence.** druglike_10k_v2 (v6): the 5 remaining stereo-crash names came
-  from 2 parents with exactly these two patterns (*transcript only*;
+  from 2 parents with exactly these two patterns (*read off the terminal*;
   `library_v6/library.stereo_crashed.tsv`). Amide over imidic acid in water:
   judgment (standard; no number checked here).
 - **Alternatives.** As 2.2.
@@ -267,16 +269,17 @@ ACS/RSC pages were not bypassed). Notes and downloaded copies:
 - **Commits.** `a0b876e` (MolGpKa port), `543e962` (triage, merge, shared state
   model), `a83d287` (`llb compare`).
 - **Evidence.** *Cost:* QupKake ~3.6 min/molecule on one core on Owen's 10
-  largest, almost all xtb, i.e. ~60,000 CPU-h per million (*transcript only*);
+  largest, almost all xtb, i.e. ~60,000 CPU-h per million (*read off the terminal*);
   28.0 s/parent on druglike_10k (77.83 CPU-h for 10,000; `llb timing`,
-  *transcript only*). MolGpKa port: 4.5 ms/molecule on one laptop thread;
+  *read off the terminal*); 31.8 s/parent on the routed v2 parents
+  (`validation/2026-10_druglike10k/druglike_10k_v2/timing_v6.txt`). MolGpKa port: 4.5 ms/molecule on one laptop thread;
   triage end to end 9.7–13 ms/parent on Great Lakes. *Port fidelity:* max
   difference from upstream 3.8e-6 pKa (16 molecules / 47 sites, local) and
   6.7e-6 (Owen's 50, 242 sites, Great Lakes). The port keeps upstream's
   always-zero H-bond donor/acceptor feature columns, because the weights were
   trained that way; "fixing" them moves predictions by up to 3 units.
   *Agreement on druglike_10k* (QupKake on all 10k, 9,772 compared; filter v3,
-  coupling off; `druglike_10k/compare/summary.json`): per-site MAE 1.25 over
+  coupling off; `validation/2026-10_druglike10k/druglike_10k/compare/summary.json`): per-site MAE 1.25 over
   10,865 shared sites; aliphatic amine 0.75 (n = 3,037), carboxylic acid 0.49
   (293), pyridine-like N 1.15 (1,920, MolGpKa lower by 0.86 on average),
   imidazole-like N 1.16 (2,823, lower by 0.88); dominant microstate agrees
@@ -302,13 +305,13 @@ ACS/RSC pages were not bypassed). Notes and downloaded copies:
 
 - **Decision.** A parent goes to QupKake if any MolGpKa site (after the site
   filter) lies within 1.5 units of any target pH.
-- **Governs.** `--route-window 1.5` (`triage.py`); `stats.json` records the
+- **Governs.** `--route-window 1.5` (`triage.py`); `triage/stats.json` records the
   routed fraction at windows 0–4.
 - **Commits.** `543e962`.
 - **Evidence.** The 1.5 was John's proposal before any data (|pKa − pH| > 1.5
   puts a site > 97% in one form); it was then measured on druglike_10k, QupKake
-  on all 10k, filter v4, coupling on (`compare_c`, *transcript only*; the
-  filter-v3 `compare/` in the evidence set gives the same curve within
+  on all 10k, filter v4, coupling on (`compare_c`, *read off the terminal*; the
+  filter-v3 `validation/2026-10_druglike10k/druglike_10k/compare/` gives the same curve within
   1 point):
 
   | window | routed | settled | settled but disagree with QupKake |
@@ -320,7 +323,7 @@ ACS/RSC pages were not bypassed). Notes and downloaded copies:
   | 3.0 | 47% | 5,154 | 72 (1.4%) |
 
   Reading the 165 disagreements of the first compare by charge pattern
-  (*transcript only*): ~95 were MolGpKa +1 against QupKake +2 to +5 at every
+  (*read off the terminal*): ~95 were MolGpKa +1 against QupKake +2 to +5 at every
   pH, i.e. QupKake overcharging (later traced to guanidine splitting, 4.5, and
   the aromatic-N artefact, 6.1); ~25 MolGpKa −1 vs 0; ~30 at pH 8.4 only. So
   most "misses" at 1.5 were QupKake errors, and widening the window would
@@ -375,7 +378,7 @@ ACS/RSC pages were not bypassed). Notes and downloaded copies:
 - **Governs.** `--coupling-bonds 3`, `--coupled route` (`triage.py`).
 - **Commits.** `543e962`.
 - **Evidence.** druglike_10k: 260 parents routed for coupling (251 also near the
-  window, 9 coupling alone; *transcript only*, `triage/stats.json`). Since
+  window, 9 coupling alone; `validation/2026-10_druglike10k/druglike_10k/triage/stats.json`). Since
   `85cdb85` the state model itself corrects coupling (section 5), so this route
   is a review flag rather than the fix.
 - **Alternatives.** Not routing them: possible now that coupling is modelled;
@@ -395,7 +398,7 @@ ACS/RSC pages were not bypassed). Notes and downloaded copies:
   "Bad Conformer Id" because one molecule in each did not embed (QupKake's CLI
   embeds every row without checking, then exits). After the fix, 206 molecules
   were left out and 22 failed inside QupKake; 73 routed parents in the v1 and
-  v2 merges are `molgpka_fallback` (*transcript only*).
+  v2 merges are `molgpka_fallback` (*read off the terminal*).
 - **Alternatives.** Dropping those parents (`--on-qupkake-fail drop`): rejected
   as default, since MolGpKa's states are a reasonable answer and the parent
   stays in the library, marked.
@@ -413,7 +416,7 @@ and merge refuses mixed versions; old QupKake runs are rebuilt with `llb
 reenumerate` (no xtb). `--keep-amide-sites` turns the **whole** filter off,
 not only the amide rules.
 
-MolGpKa sites dropped on druglike_10k_v2 (`triage_v6/stats.json`): amide_nh_acid
+MolGpKa sites dropped on druglike_10k_v2 (`validation/2026-10_druglike10k/druglike_10k_v2/triage_v6/stats.json`): amide_nh_acid
 7,568; alcohol_oh_acid 2,160; amide_n_base 1,440; amine_nh_acid 451;
 carbon_acid 54; sulfur_base 17; oxygen_base 9; amidine_amino_n_base 5. Most of
 these were far from the window and would never have mattered; the rules exist
@@ -431,8 +434,8 @@ for the minority that were not.
 - **Evidence.** *Measured:* Owen's 50: QupKake put 44 amide-type N-H at pKa
   2.4–6.7, making an amide anion the dominant state at pH 7.4 in 22 of 50
   parents; all 5 parents the triage settled "against" QupKake were this
-  (*transcript only*). druglike_10k: 255 parents had a QupKake amide/imide anion
-  at mid pH before the filter (`druglike_10k/compare/summary.json`). MolGpKa put
+  (*read off the terminal*). druglike_10k: 255 parents had a QupKake amide/imide anion
+  at mid pH before the filter (`validation/2026-10_druglike10k/druglike_10k/compare/summary.json`). MolGpKa put
   anilides at 3.9–6.0 as bases and some anilides at 6–7 as acids. *Sourced:*
   acetamide N-H 15.1 in water (Ripin & Evans, "Amides & carbamates"; marked
   extrapolated); DMSO: acetamide 25.5, N-methylacetamide 25.9, benzamide 23.3,
@@ -471,7 +474,7 @@ for the minority that were not.
   into shards and checked by merge).
 - **Commits.** `e9424c1`.
 - **Evidence.** Owen's first db2 build had `[NH-]`/`[N-]` amine-anion protomers
-  (*transcript only*). NH3 38 in water (extrapolated) and 41 in DMSO (Ripin &
+  (*read off the terminal*). NH3 38 in water (extrapolated) and 41 in DMSO (Ripin &
   Evans, "Amines"); DMSO: pyrrolidine 44, aniline 30.6, diphenylamine 25.0
   (Reich DMSO, "Amines (NH)").
 - **Correction recorded.** The commit first blamed three `1generate` build
@@ -488,7 +491,7 @@ for the minority that were not.
   `SITE_FILTER_VERSION` 3.
 - **Commits.** `121e4ad`.
 - **Evidence.** Owen's rebuild (2026-10-14) had `C(=O)[OH2+]`, a protonated nitro
-  and an alkoxide among QupKake's protomers (*transcript only*). Water (Reich
+  and an alkoxide among QupKake's protomers (*read off the terminal*). Water (Reich
   H2O, "Oxygen Acids"): protonated nitrobenzene −12.4, protonated benzoic acid
   −7.8, Me2OH+ −3.8, MeOH2+ −2.2; methanol 16, tert-butanol ~20, phenol 10.0.
 - **Status.** sourced.
@@ -500,8 +503,8 @@ for the minority that were not.
 - **Governs.** `carbon_acid`; `SITE_FILTER_VERSION` 4.
 - **Commits.** `25c3b01`.
 - **Evidence.** MolGpKa put malonic acid's CH2 at 7.46 and, with coupling off,
-  the state model built a `[CH-]` trianion at 90% (local test, *transcript
-  only*). Water (Williams "Carbon Acids", pp. 30–31; dimedone p. 28): kept
+  the state model built a `[CH-]` trianion at 90% (local test, *read off the
+  terminal*). Water (Williams "Carbon Acids", pp. 30–31; dimedone p. 28): kept
   classes reach the window — acetylacetone 8.95, benzoylacetone 8.23 (enol)/9.4,
   dimedone 5.23, triacetylmethane 5.85, malondialdehyde 5, 2-nitropropane 7.74,
   nitroethane 8.6, nitromethane 10.29; dropped classes do not — ethyl/methyl
@@ -528,8 +531,8 @@ for the minority that were not.
 - **Commits.** `19dedb6`.
 - **Evidence.** druglike_10k: QupKake gave each amino N its own site at
   10.7–11.1 beside the =N at 11.5–11.8, building +2/+3 guanidines, and those
-  `NC(=N)[NH3+]`-type protomers crashed RDKit's stereo enumeration (*transcript
-  only*). One pKa each: guanidine 13.71, acetamidine 12.52, benzamidine 11.6,
+  `NC(=N)[NH3+]`-type protomers crashed RDKit's stereo enumeration (*read off the
+  terminal*). One pKa each: guanidine 13.71, acetamidine 12.52, benzamidine 11.6,
   phenylguanidine 10.88; biguanide 13.25 then 3.07, showing how far a second
   proton on one conjugated system sits (Williams p. 28).
 - **Alternatives.** Leaving it to the coupling penalty: rejected; a 2-bond
@@ -545,7 +548,7 @@ for the minority that were not.
 - **Evidence.** druglike_10k_v2 (v2 merge): a sulfonium `[SH+]` among QupKake's
   +2 protomers, and azides protonated on the terminal N (`N=[N+]=N`) in every
   protomer of 38 names, which also crash RDKit's stereo enumeration
-  (*transcript only*). 17 MolGpKa sulfur sites dropped on v6. *Sulfur:* protonated
+  (*read off the terminal*). 17 MolGpKa sulfur sites dropped on v6. *Sulfur:* protonated
   sulfides are stronger acids than protonated ethers: Me2SH+ −5.4,
   tetrahydrothiophene-H+ −4.4 (Reich H2O p. 9, approximate); alkyl methyl
   sulfides −6.7 to −6.9 (Bonvicini et al. 1972, abstract); protonated ethers
@@ -597,7 +600,7 @@ for the minority that were not.
   neutral, so the independent Henderson–Hasselbalch product charges every amine
   whose pKa clears the pH. MolGpKa's own piperazine (10.46 on both N) locked
   the dication; experimentally the second pKa is 5.68 and the monocation
-  dominates at 7.4. *Checks* (local, *transcript only*): with all penalties
+  dominates at 7.4. *Checks* (local, *read off the terminal*): with all penalties
   zero the model reproduces the independent states exactly (3,000 random site
   sets, 0 differences); ethylenediamine at pH 7.4: 37% dication in the model vs
   43% from its measured pKas; piperazine at 6.4: 17% vs 16%; a
@@ -641,8 +644,8 @@ for the minority that were not.
 - **Evidence.** druglike_10k: QupKake put pyrazine, oxazole, 1,2,3-triazole and
   tetrazole ring N at 9–10 where MolGpKa gave 2.7–4.2 (pyrazine measured 0.6);
   186 of 4,743 shared aromatic-N sites had QupKake ≥ 6.4 with MolGpKa ≤ 4
-  (*transcript only*). The reference set separated the cases
-  (`druglike_10k/ref_qk/reference_check.tsv`; measured values from Williams,
+  (*read off the terminal*). The reference set separated the cases
+  (`validation/2026-10_druglike10k/druglike_10k/ref_qk/reference_check.tsv`; measured values from Williams,
   cited per row in `pka_triage/reference/aromatic_n_bases.tsv`):
 
   | | MolGpKa | QupKake |
@@ -660,7 +663,7 @@ for the minority that were not.
   MolGpKa 6.98), which is why the rule is conditional. v2 run: the swap applied
   to 735 parents (21% of routed); QupKake protomers at +3/+4 fell from 269 to
   76 together with v5, and from 3.05 to 2.53 protomers per routed parent
-  (*transcript only*).
+  (*read off the terminal*).
 - **v1 → v2.** v1 (`11f4a56`) triggered only on an off-ring base at pKa ≥ 7. On
   the v2 run a routed tetrazole kept QupKake's ring-N values (5.61–5.81)
   beside a dimethylamine both tools put at 5.63 (lowered by the adjacent
@@ -700,7 +703,7 @@ for the minority that were not.
   db2_converter would rename these `NAME.0/NAME.1`, and mol2db2 keeps the last
   16 characters, breaking the contract inside the db2. druglike_10k v1: closure
   added 5,499 isomers (1,828 of them N-H+ invertomers); v6b: 19,102 names,
-  0 renamed in the db2 (`db2_verification_v6b.csv`). One name per run still
+  0 renamed in the db2 (`validation/2026-10_druglike10k/druglike_10k_v2/db2_verification_v6b.csv`). One name per run still
   differs in perception between the naming and db2_converter environments
   (`Cm50000037lNj10C`) and is excluded by hand (see open items).
 - **Alternatives.** Stereo enumerated on the neutral parent only: rejected, it
@@ -721,8 +724,8 @@ for the minority that were not.
   fail to embed (conformator builds the possible isomer, which then fails the
   stereo check), and 285 of 314 `1generate` names cannot embed (296 have a
   centre on a fused/bridged atom); 64 parents lost every name this way though
-  each had buildable isomers (*transcript only*; the failure lists are in
-  `druglike_10k/db2_verification.csv`). The RDKit db2 fallback built 36 of the
+  each had buildable isomers (*read off the terminal*; the failure lists are in
+  `validation/2026-10_druglike10k/druglike_10k/db2_verification.csv`). The RDKit db2 fallback built 36 of the
   314 (see 9.2), consistent with these being impossible.
 - **Status.** measured.
 
@@ -737,7 +740,7 @@ for the minority that were not.
 - **Evidence.** v6 run: of 300 rejected isomers from the 245 parents lost at
   names, 9 embedded with more effort (fused cyclopropanes, bicyclo[2.1.1]);
   the escalation rescues 8 of the 9, and still rejects the impossible cage
-  isomers (40-isomer cage set keeps the same 5) (*transcript only*). Uncapped
+  isomers (40-isomer cage set keeps the same 5) (*read off the terminal*). Uncapped
   ETKDG was left out: it rescued fewer and spends ~20 s on each impossible
   isomer. Cost ~8 s CPU per rejection, ~800 rejections per 10k parents.
 - **Status.** measured.
@@ -752,11 +755,12 @@ for the minority that were not.
 - **Commits.** `29a0230`.
 - **Evidence.** v6 built 9,698 parents against v1's 9,771; all 100 parents
   that built in v1 and not in v6 were lost to `stereo_cannot_embed`
-  (`druglike_10k_v2/regressed.txt`), mostly bicyclo[1.1.1]pentanes (whose
+  (`validation/2026-10_druglike10k/druglike_10k_v2/regressed.txt`), mostly bicyclo[1.1.1]pentanes (whose
   bridgehead labels are not real stereocentres; RDKit rejects every
   labelling) and fused cyclopropanes that conformator builds. With the guard
-  (v6b): 9,797 parents built, 1 parent built in v1 and not in v6b
-  (`db2_verification_v6b.csv`).
+  (v6b; 357 impossible isomers dropped, 310 protomers kept whole,
+  `validation/2026-10_druglike10k/druglike_10k_v2/library_v6b/stats.json`): 9,797 parents built, 1 parent built in v1 and not in v6b
+  (`validation/2026-10_druglike10k/druglike_10k_v2/db2_verification_v6b.csv`).
 - **Alternatives.** More embedding effort: rejected; these fail at any effort in
   RDKit while conformator builds them.
 - **Status.** measured.
@@ -811,8 +815,8 @@ for the minority that were not.
 - **Evidence.** Owen's set with no relaxation: conformator left starting
   geometry in some molecules (an N-H 1.149 Å from a C-H in every conformer),
   so every db2 set was flagged broken (98 of 429 hierarchies all-broken). On
-  2,735 conformers from three such families (`llb mmff-test`, *transcript
-  only*; input 2,011 under the 1.70 Å H…H rule, 469 N+…O− contacts < 3.2 Å):
+  2,735 conformers from three such families (`llb mmff-test`, *read off the
+  terminal*; input 2,011 under the 1.70 Å H…H rule, 469 N+…O− contacts < 3.2 Å):
 
   | variant | still < 1.70 Å | heavy-atom RMSD | Rg change | N+…O− contacts |
   | --- | --- | --- | --- | --- |
@@ -848,7 +852,7 @@ for the minority that were not.
   runbooks.
 - **Evidence.** RDKit did rescue one of Owen's molecules (owen_13: 587 of 600
   conformers, 544 s, against conformator's 0). On druglike_10k v1, the 314
-  `1generate` names rebuilt with `--method rdkit` (*transcript only*;
+  `1generate` names rebuilt with `--method rdkit` (*read off the terminal*;
   `llb timing db2_fallback`): 36 built (11.5%), 277 failed
   `3chemistrycheck`; median 133 s per name, max 4,950 s; 19% under 25
   conformers; parents lost to `1generate` moved columns (135 → 1) but parents
@@ -883,13 +887,14 @@ for the minority that were not.
 - **Commits.** `5e728fd` (`invertomer_of`), `f6578cf` (LLB collapse); DRAP
   `1e2ea63`.
 - **Evidence.** v1: 1,828 of 22,613 names (8.1%) are invertomers of another row
-  (`druglike_10k/library/stats.json`). The two are different 3D shapes for
+  (*read off the terminal*; v1's `library/stats.json` was not copied); v6b:
+  1,471 of 19,102 (7.7%; `validation/2026-10_druglike10k/druglike_10k_v2/library_v6b/stats.json`). The two are different 3D shapes for
   docking (a piperidinium substituent axial or equatorial; the N-H donor
   pointing one way or the other); in water they interconvert (deprotonate,
   invert, reprotonate), so they are one species, and a binding site selects
   one. v6: 24 of 179 `3chemistrycheck` failures were invertomers where
   conformator built the other one, which shows the geometries are not
-  interchangeable in the build (*transcript only*).
+  interchangeable in the build (*read off the terminal*).
 - **Alternatives.** *Collapse before building* (keep one invertomer): saves
   ~8% of names, ~200 CPU-h of db2 per 100k parents and 8% of all docking; loses
   the pose the protein may prefer. Rejected for now: the saving is fixed and
@@ -912,11 +917,12 @@ for the minority that were not.
   db2_converter's RDKit (`Cm50000037lNj10C`, a protonated bicyclic amine); it
   is excluded by hand before the build.
 - **Restrained MMFF parameters** were chosen on Owen's set, not scanned (9.1).
-- **Evidence files** are pending copy into `validation/2026-10_druglike10k/`;
-  several numbers above are *transcript only* and would need their run files
-  (notably `compare_c/summary.json`, the v1 `llb timing` output,
-  `db2_fallback` timing, `POOLED.done`, `library_v6/library.stereo_crashed.tsv`
-  and the merged charge spreads) to be fully reproducible from the repo.
+- **Evidence gaps.** Numbers marked *read off the terminal* have no file in
+  `validation/2026-10_druglike10k/`; the missing ones that matter most are `compare_c/summary.json`
+  (the coupled window curve), v1's `library/stats.json` and `llb timing`
+  output, the `db2_fallback` timing, `POOLED.done`,
+  `library_v6/library.stereo_crashed.tsv`, the merged charge spreads, the 735
+  aromatic-N swaps and the per-parent loss breakdowns.
 
 ## Inconsistencies found while writing this record (not fixed here)
 
