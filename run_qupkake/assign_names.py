@@ -61,6 +61,7 @@ import argparse
 import csv
 import hashlib
 import json
+import os
 import re
 import sys
 from collections import Counter, defaultdict
@@ -101,6 +102,35 @@ def needs_embed_check(m: Chem.Mol) -> bool:
                and ri.NumAtomRings(a.GetIdx()) >= 2 for a in m.GetAtoms())
 
 
+def _embeds(mh: Chem.Mol, seed: int, max_iters: int, random_coords: bool) -> bool:
+    from rdkit.Chem import AllChem
+    ps = AllChem.ETKDGv3()
+    ps.randomSeed = seed
+    ps.useRandomCoords = random_coords
+    if max_iters:
+        ps.maxIterations = max_iters
+    return AllChem.EmbedMolecule(mh, ps) != -1
+
+
+# Fast tries first; only a failure pays for the slow ones. Embedding is random:
+# on 9 strained-but-real isomers (fused cyclopropanes, bicyclo[2.1.1]) the fast
+# tries rejected 8; random coordinates with 200 attempts built all 8 that any
+# method here could (2026-10-16). Uncapped ETKDG is left out: it rescued fewer
+# and spends ~20 s on each impossible isomer.
+EMBED_TRIES = [(0xC0FFEE, 10, False), (0xBEEF, 10, False),      # fast
+               (7, 200, True),                                  # random coords
+               (1, 10, True), (2, 10, True), (3, 10, True)]
+
+
+def embed_verdict(smi: str) -> bool:
+    """Can RDKit build this stereoisomer in 3D at all? (no cache; picklable)"""
+    m = Chem.MolFromSmiles(smi)
+    if m is None or not needs_embed_check(m):
+        return True
+    mh = Chem.AddHs(m)
+    return any(_embeds(mh, seed, iters, rc) for seed, iters, rc in EMBED_TRIES)
+
+
 def embeddable(smi: str) -> bool:
     """Can RDKit build this stereoisomer in 3D at all?
 
@@ -108,27 +138,31 @@ def embeddable(smi: str) -> bool:
     so on a cage it also writes configurations that cannot exist: 11 of 14
     3chemistrycheck failures checked on the drug-like 10k fail to embed (the
     conformer generator builds the possible isomer and the stereo check then
-    fails). ETKDGv3 capped at 10 attempts, two seeds: on 48 closure isomers of
-    those cages it agreed with uncapped ETKDG and with random coordinates on
-    every one, at 1.2 s instead of 58 s (impossible isomers are what is slow).
+    fails), and so do 285 of 314 1generate names. Verdicts are precomputed in
+    parallel by prefill_embed_cache; see EMBED_TRIES for what a rejection means.
     """
-    if smi in _EMBED_CACHE:
-        return _EMBED_CACHE[smi]
-    from rdkit.Chem import AllChem
-    m = Chem.MolFromSmiles(smi)
-    ok = True
-    if m is not None and needs_embed_check(m):
-        mh = Chem.AddHs(m)
-        ok = False
-        for seed in (0xC0FFEE, 0xBEEF):
-            ps = AllChem.ETKDGv3()
-            ps.randomSeed = seed
-            ps.maxIterations = 10
-            if AllChem.EmbedMolecule(mh, ps) != -1:
-                ok = True
-                break
-    _EMBED_CACHE[smi] = ok
-    return ok
+    if smi not in _EMBED_CACHE:
+        _EMBED_CACHE[smi] = embed_verdict(smi)
+    return _EMBED_CACHE[smi]
+
+
+def prefill_embed_cache(smiles: list[str], jobs: int) -> None:
+    """Decide every isomer up front, `jobs` processes at once: a rejection
+    costs seconds (all of EMBED_TRIES), ~800 of them per 10k parents."""
+    todo = sorted({s for s in smiles if s not in _EMBED_CACHE})
+    if not todo:
+        return
+    if jobs <= 1:
+        for s in todo:
+            _EMBED_CACHE[s] = embed_verdict(s)
+        return
+    import multiprocessing as mp
+    # fork where the platform has it (Linux, Great Lakes): workers inherit this
+    # module instead of re-running the caller's script, which spawn does
+    ctx = mp.get_context("fork") if "fork" in mp.get_all_start_methods() else mp.get_context()
+    with ctx.Pool(jobs) as pool:
+        for s, ok in zip(todo, pool.map(embed_verdict, todo, chunksize=64)):
+            _EMBED_CACHE[s] = ok
 
 
 def invertomer_key(smi: str) -> str:
@@ -181,6 +215,9 @@ def main(argv=None) -> int:
     ap.add_argument("--no-embed-check", action="store_true",
                     help="keep stereoisomers RDKit cannot embed (cage configurations "
                          "that cannot exist; db2_converter fails them as 3chemistrycheck)")
+    ap.add_argument("--jobs", type=int,
+                    default=int(os.environ.get("SLURM_CPUS_PER_TASK") or os.cpu_count() or 1),
+                    help="processes for the 3D check (default: SLURM_CPUS_PER_TASK, else all cores)")
     ap.add_argument("--allow-partial", action="store_true",
                     help="name what is finished even if some shards are not")
     args = ap.parse_args(argv)
@@ -226,6 +263,12 @@ def main(argv=None) -> int:
         for r in parents_rows:
             pid = r.get("parent_id") or r["zinc_id"]     # older parents.tsv: zinc_id only
             input_name[pid] = r.get("input_name") or pid
+
+    # ---- 3D check of every closure isomer, in parallel ---------------------
+    if not args.no_embed_check:
+        isos = [smi for rows in rows_by_parent.values() for r in rows
+                for smi in closure(r["smiles"])]
+        prefill_embed_cache(isos, args.jobs)
 
     # ---- closure + naming ----------------------------------------------------
     library: list[dict] = []
