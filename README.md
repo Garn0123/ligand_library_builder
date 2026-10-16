@@ -46,6 +46,19 @@ politely, and the gotchas that actually happened),
 [run_qupkake/README.md](run_qupkake/README.md) (how protonation states are chosen),
 [mol_compiler/README.md](mol_compiler/README.md) (the db2 record model and chunking).
 
+## Tests
+
+`tests/` covers the library-build logic: the site filter, coupled states, the
+aromatic-N hybrid, tautomers, the 3D stereo check, names, verify-db2 and
+collapse-invertomers, each pinned to the molecule that motivated it. Run from the
+repo root in the `llb_pka` env:
+
+    python -m pytest                     # ~1 min; MolGpKa tests need MOLGPKA_DIR
+
+GitHub Actions runs it on every push (`.github/workflows/tests.yml`). QupKake/xtb
+and db2_converter are not exercised there: a stand-in QupKake writes the SDF, and
+the db2 tools are tested on small fake db2 files.
+
 ## History
 
 This repo was `mol_compiler`, then briefly `small_molecule_prep`. Its history is intact under `mol_compiler/`

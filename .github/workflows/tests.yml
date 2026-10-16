@@ -1,0 +1,21 @@
+name: tests
+on: [push, pull_request]
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: environments/llb_pka.yml
+          cache-environment: true
+      - name: MolGpKa checkout (weights + SMARTS, pinned)
+        run: |
+          git clone -q https://github.com/Xundrug/MolGpKa "$RUNNER_TEMP/MolGpKa"
+          git -C "$RUNNER_TEMP/MolGpKa" checkout -q 4dc8352
+          echo "MOLGPKA_DIR=$RUNNER_TEMP/MolGpKa" >> "$GITHUB_ENV"
+      - name: pytest
+        run: python -m pytest
