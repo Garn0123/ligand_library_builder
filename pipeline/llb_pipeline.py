@@ -118,6 +118,21 @@ class Runner:
         return sum(1 for line in res.stdout.splitlines()
                    if line.strip() and not line.split("|")[1].startswith("COMPLETED"))
 
+    def failed_task_indices(self, ids: list[str]) -> list[int]:
+        """Array task indices (JOBID_N) that ended in anything but COMPLETED."""
+        if not ids:
+            return []
+        res = subprocess.run(["sacct", "-n", "-X", "-P", "-j", ",".join(ids),
+                              "--format=JobID,State"], capture_output=True, text=True)
+        out = []
+        for line in res.stdout.splitlines():
+            jid, _, state = line.partition("|")
+            if "_" in jid and not state.startswith("COMPLETED"):
+                idx = jid.split("_", 1)[1]
+                if idx.isdigit():
+                    out.append(int(idx))
+        return sorted(set(out))
+
     def cancel(self, ids: list[str]) -> None:
         if ids:
             subprocess.run(["scancel", *ids])
@@ -243,6 +258,17 @@ def gate(run: Run, key: str, lost: int, total: int, what: str) -> dict:
     return result
 
 
+def ranges(idx: list[int]) -> str:
+    """[3, 6, 7, 8, 17] -> '3,6-8,17' (a SLURM --array list)."""
+    out, idx = [], sorted(set(idx))
+    for i in idx:
+        if out and i == out[-1][1] + 1:
+            out[-1][1] = i
+        else:
+            out.append([i, i])
+    return ",".join(str(a) if a == b else f"{a}-{b}" for a, b in out)
+
+
 def qupkake_input(run: Run) -> str | None:
     """Parents directory QupKake runs on: all parents (--validate) or the routed set."""
     if run.settings["validate"]:
@@ -306,9 +332,13 @@ def submit_qupkake(run: Run, retry: bool) -> list[str]:
                           f"({run.settings['max_array_tasks']:,}); waves are not built yet -- "
                           f"split the input into smaller libraries")
     t = run.settings["qupkake_time"]
-    rc, out = run.runner.llb_capture("submit-qupkake", src, "protomers_qk",
+    # a retry submits only the shards with no DONE, not the whole array again
+    extra = ["--only-missing"] if retry else []
+    rc, out = run.runner.llb_capture("submit-qupkake", src, "protomers_qk", *extra,
                                      f"--time={double_time(t) if retry else t}")
     ids = SUBMITTED.findall(out)
+    if retry and not rc and "nothing to submit" in out:
+        return []
     if rc or not ids:
         raise Stop("run", "llb submit-qupkake failed (pipeline/logs/steps.log)")
     return ids
@@ -414,9 +444,14 @@ def submit_db2(run: Run, retry: bool) -> list[str]:
     if tasks > s["max_array_tasks"]:
         raise Stop("run", f"{tasks:,} db2 tasks is more than max_array_tasks; split the library")
     t = double_time(s["db2_time"]) if retry else s["db2_time"]
+    extra = []
+    if retry:   # only the tasks that failed or timed out, not the whole array again
+        failed = run.runner.failed_task_indices(run.stage("db2").get("attempt", []))
+        if failed:
+            extra = ["--tasks", ranges(failed)]
     rc, out = run.runner.llb_capture("submit-db2", "db2_run", "library/build.smi",
                                      "--ncpus", str(s["db2_ncpus"]), "--nshards", str(nshards),
-                                     "--mmff", s["db2_mmff"], "--time", t)
+                                     "--mmff", s["db2_mmff"], "--time", t, *extra)
     ids = SUBMITTED.findall(out)
     if rc or not ids:
         raise Stop("run", "llb submit-db2 failed (pipeline/logs/steps.log)")
@@ -637,6 +672,9 @@ def advance(run: Run) -> int:
                                               f"the time, e.g. {missing[:5]}")
                     epoch = dt.datetime.now().timestamp()
                     ids = SUBMIT[stage](run, retry=True)
+                    if not ids:
+                        raise Stop("collect", f"{len(missing)} unfinished but nothing could be "
+                                              f"resubmitted, e.g. {missing[:5]}")
                     s.update(jobs=s["jobs"] + ids, attempt=ids, retries=1, submitted_epoch=epoch)
                     s.setdefault("control", []).append(submit_control(run, ids, stage == "db2"))
                     run.save()

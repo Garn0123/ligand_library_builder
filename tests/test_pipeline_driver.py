@@ -104,7 +104,7 @@ class FakeRunner:
             jid = self._id()
             if self.db2_failed_rounds > 0:
                 self.db2_failed_rounds -= 1
-                self.failed[jid] = 3
+                self.failed[jid] = [4, 5, 6]
             return 0, f"Submitted batch job {jid}\n"
         if step == "timing":
             return 0, "== db2 build: fake\n"
@@ -134,7 +134,10 @@ class FakeRunner:
         return False
 
     def failed_tasks(self, ids):
-        return sum(self.failed.get(i, 0) for i in ids)
+        return sum(len(self.failed.get(i, [])) for i in ids)
+
+    def failed_task_indices(self, ids):
+        return sorted(t for i in ids for t in self.failed.get(i, []))
 
     def cancel(self, ids):
         self.cancelled = ids
@@ -215,6 +218,7 @@ def test_unfinished_qupkake_is_retried_once_at_twice_the_time(tmp_path):
     run, rcs = advance_until_idle(run, fr)
     subs = [c for c in fr.calls if c[0] == "submit-qupkake"]
     assert [c[-1] for c in subs] == ["--time=00:30:00", "--time=01:00:00"]
+    assert "--only-missing" not in subs[0] and "--only-missing" in subs[1]
     assert run.state.get("finished")
 
 
@@ -228,7 +232,10 @@ def test_twice_unfinished_qupkake_stops(tmp_path):
 def test_failed_db2_tasks_are_retried_and_old_failures_forgotten(tmp_path):
     run, fr = new_run(tmp_path, db2_failed_rounds=1)
     run, rcs = advance_until_idle(run, fr)
-    assert [c[-1] for c in fr.calls if c[0] == "submit-db2"] == ["01:00:00", "02:00:00"]
+    subs = [c for c in fr.calls if c[0] == "submit-db2"]
+    assert "--tasks" not in subs[0]
+    assert subs[1][subs[1].index("--time") + 1] == "02:00:00"
+    assert subs[1][subs[1].index("--tasks") + 1] == "4-6"     # only the failed tasks
     assert run.state.get("finished")
 
 
@@ -296,3 +303,8 @@ def test_half_written_parents_stops_instead_of_clobbering(tmp_path):
     run.save()
     run, rcs = advance_until_idle(P.Run(run.path, fr), fr)
     assert rcs[-1] == 3 and "half-written" in run.stage("parents")["message"]
+
+
+def test_ranges():
+    assert P.ranges([17, 3, 6, 7, 8]) == "3,6-8,17"
+    assert P.ranges([1233]) == "1233"

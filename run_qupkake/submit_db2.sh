@@ -21,6 +21,8 @@
 #                 MMFF (folds zwitterions); off = no relaxation (left 1.15 A H-H
 #                 clashes in every conformer of some Owen parents, 2026-10-14)
 #   --nshards N   100              --mem-per-cpu 2G   --time 24:00:00
+#   --tasks LIST  only these array tasks, e.g. 3,17-19 (a retry of failed tasks;
+#                 finished molecules inside them are skipped anyway)
 #
 # Resubmitting with an existing RUNDIR resumes: shards are NOT re-split (a new
 # split would scatter half-finished work across different shard numbers), and
@@ -32,7 +34,7 @@ set -euo pipefail
 [[ $# -ge 2 ]] || { sed -n '2,/^$/p' "$0" >&2; exit 64; }
 RUN="$1"; LIB="$2"; shift 2
 METHOD=conformator; NCONF=600; MMFF=restrained; NCPUS=8; NSHARDS=100
-MEM_PER_CPU=2G; TIME=24:00:00
+MEM_PER_CPU=2G; TIME=24:00:00; TASKS=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --method)      METHOD="$2"; shift 2 ;;
@@ -42,6 +44,7 @@ while [[ $# -gt 0 ]]; do
         --nshards)     NSHARDS="$2"; shift 2 ;;
         --mem-per-cpu) MEM_PER_CPU="$2"; shift 2 ;;
         --time)        TIME="$2"; shift 2 ;;
+        --tasks)       TASKS="$2"; shift 2 ;;
         --)            shift; break ;;
         *) echo "unknown option $1" >&2; exit 64 ;;
     esac
@@ -111,9 +114,10 @@ echo "== preflight (config: $LLB_CONFIG)"
 
 ntasks=$(( (NSHARDS + NCPUS - 1) / NCPUS ))
 cd "$RUN"
-echo "== submitting $ntasks task(s) x $NCPUS builds, account=$LLB_ACCOUNT partition=$LLB_PARTITION"
+spec="${TASKS:-0-$((ntasks - 1))}"
+echo "== submitting task(s) $spec of $ntasks x $NCPUS builds, account=$LLB_ACCOUNT partition=$LLB_PARTITION"
 sbatch -A "$LLB_ACCOUNT" -p "$LLB_PARTITION" \
-    --job-name=db2 --array="0-$((ntasks - 1))%${LLB_ARRAY_PARALLEL:-50}" \
+    --job-name=db2 --array="${spec}%${LLB_ARRAY_PARALLEL:-50}" \
     --cpus-per-task="$NCPUS" --mem-per-cpu="$MEM_PER_CPU" --time="$TIME" \
     --output="$RUN/logs/task_%A_%a.out" \
     --export=ALL,RUNDIR="$RUN" \
