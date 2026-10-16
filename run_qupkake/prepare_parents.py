@@ -19,7 +19,7 @@ What it does, in order:
   2. Standardize with qupkake_protomers.standardize (imported, not copied, so
                  the dedupe key is exactly the structure QupKake will see):
                  largest fragment, cleanup, neutralize.
-  2b. Tautomer. A ring imino tautomer (N=c1[nH]..., e.g. 2-iminopyridine) gets
+  2b. Tautomer. An imino tautomer (N=c1[nH]..., RO-C(=NH)OH, ...) gets
                  its proton moved to the amino form (qupkake_protomers.amino_tautomer):
                  the dominant form in water, the one both pKa predictors should
                  see, and the =NH crashes RDKit's stereo enumeration in the db2
