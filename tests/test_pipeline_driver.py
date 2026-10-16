@@ -182,7 +182,8 @@ def test_happy_path_runs_every_stage_and_writes_the_records(tmp_path):
     assert "C00000000000001C" not in build and build.count("\n") == 39
     controls = [a for a in fr.sbatches if "control" in a[a.index("-J") + 1]]
     assert len(controls) == 3                         # after qupkake, names, db2
-    assert "--mail-type=END,FAIL" in controls[-1] and "--mail-type=FAIL" in controls[0]
+    assert "--mail-type=END,FAIL,TIME_LIMIT" in controls[-1]
+    assert "--mail-type=FAIL,TIME_LIMIT" in controls[0]
     assert any(c[0] == "submit-db2" and "--nshards" in c for c in fr.calls)
 
 
@@ -273,3 +274,25 @@ def test_status_and_cancel_commands(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "verify" in out and "finished" in out and "llb mol2-library" in out
     assert fr.cancelled                      # every job and control job id
+
+
+def test_a_control_job_killed_mid_stage_is_picked_up(tmp_path):
+    run, fr = new_run(tmp_path)
+    # the first control job ran parents, then died during triage
+    fr.llb("parents")
+    (run.f("parents", "shards.tsv.meta")).write_text("n_shards=1\n")
+    run.stage("parents").update(status="done")
+    run.stage("triage").update(status="in_progress")
+    run.save()
+    run, rcs = advance_until_idle(P.Run(run.path, fr), fr)
+    assert [c[0] for c in fr.calls].count("parents") == 1     # not redone
+    assert run.state.get("finished")
+
+
+def test_half_written_parents_stops_instead_of_clobbering(tmp_path):
+    run, fr = new_run(tmp_path)
+    fr.llb("parents")                       # shards.tsv but no .meta: interrupted
+    run.stage("parents").update(status="in_progress")
+    run.save()
+    run, rcs = advance_until_idle(P.Run(run.path, fr), fr)
+    assert rcs[-1] == 3 and "half-written" in run.stage("parents")["message"]

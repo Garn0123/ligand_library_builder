@@ -52,7 +52,7 @@ DEFAULTS = {
     "qupkake_time": "00:30:00",
     "names_cpus": 16, "names_mem": "32G", "names_time": "03:00:00",
     "db2_ncpus": 8, "db2_names_per_task": 25, "db2_time": "01:00:00", "db2_mmff": "restrained",
-    "control_time": "02:00:00", "control_mem": "8G",
+    "control_time": "04:00:00", "control_mem": "8G",
     "max_array_tasks": 4500,
     # stop thresholds: the loss fraction above which a stage halts the run instead
     # of recording and continuing (about twice what the drug-like 10k measured)
@@ -263,6 +263,11 @@ def parents_in(run: Run, parents_dir: str) -> int:
 # ---------------------------------------------------------------------------
 def do_parents(run: Run) -> None:
     s = run.settings
+    if run.f("parents", "shards.tsv.meta").exists():       # finished before an interruption
+        return
+    if run.f("parents", "shards.tsv").exists():
+        raise Stop("run", "parents/ is half-written (a control job ended during llb parents); "
+                          "remove parents/, then `llb pipeline resume`")
     if run.runner.llb("parents", *run.spec["inputs_abs"], "-o", "parents",
                       "--shard-size", str(s["shard_size"]), "--preflight", str(s["preflight"])):
         raise Stop("run", "llb parents failed (pipeline/logs/steps.log)")
@@ -276,6 +281,11 @@ def check_parents(run: Run) -> dict:
 
 
 def do_triage(run: Run) -> None:
+    if run.f("triage", "stats.json").exists():              # finished before an interruption
+        return
+    if run.f("triage", "routed", "shards.tsv").exists():
+        raise Stop("run", "triage/routed/ was written but stats.json was not (a control job "
+                          "ended during the finish step); remove triage/routed/, then resume")
     if run.runner.llb("triage", "parents", "-o", "triage"):
         raise Stop("run", "llb triage failed (pipeline/logs/steps.log)")
 
@@ -586,7 +596,9 @@ def submit_control(run: Run, after: list[str], last: bool) -> str:
     if after:
         args.append(f"--dependency=afterany:{':'.join(after)}")
     if c.get("LLB_MAIL"):
-        args += ["--mail-user", c["LLB_MAIL"], f"--mail-type={'END,FAIL' if last else 'FAIL'}"]
+        # TIME_LIMIT too: a control job that runs out of time ends the chain
+        args += ["--mail-user", c["LLB_MAIL"],
+                 f"--mail-type={'END,FAIL,TIME_LIMIT' if last else 'FAIL,TIME_LIMIT'}"]
     args += ["--wrap", f"{LLB} pipeline advance {shlex.quote(str(run.path))}"]
     return run.runner.sbatch(args)
 
@@ -633,10 +645,15 @@ def advance(run: Run) -> int:
                 s.update(result=GATE[stage](run), status="done", ended=now())
                 run.save()
                 continue
-            # pending
-            s["started"] = now()
+            # pending, or in_progress: a control job ended during this inline stage
+            # (time limit, node failure); each do_* step skips or refuses safely
+            s["started"] = s.get("started") or now()
             if stage in INLINE:
                 do, check = INLINE[stage]
+                if s["status"] == "in_progress":
+                    print(f"{stage}: the last control job ended during it; picking it up")
+                s["status"] = "in_progress"
+                run.save()
                 do(run)
                 s.update(result=check(run), status="done", ended=now())
                 run.save()
