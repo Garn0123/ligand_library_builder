@@ -308,3 +308,21 @@ def test_half_written_parents_stops_instead_of_clobbering(tmp_path):
 def test_ranges():
     assert P.ranges([17, 3, 6, 7, 8]) == "3,6-8,17"
     assert P.ranges([1233]) == "1233"
+
+
+def test_each_stage_records_the_code_it_ran_with(tmp_path, monkeypatch):
+    commits = iter(["aaa111"] + ["bbb222"] * 50)      # pulled after the first control job
+    monkeypatch.setattr(P, "code_version", lambda: next(commits))
+    run, fr = new_run(tmp_path)
+    run, _ = advance_until_idle(run, fr)
+    assert run.stage("parents")["commits"] == ["aaa111"]
+    assert run.stage("verify")["commits"] == ["bbb222"]
+    assert "bbb222" in run.f("REPORT.md").read_text()
+
+
+def test_versions_finds_the_json_before_a_module_banner(tmp_path):
+    class R:
+        def llb_capture(self, *a):
+            return 0, 'Loading module\n{"rdkit": "2024.03.5"}\n\n  Provides Chemistry software.\n'
+    v = P.versions(R(), {})
+    assert v["db2c"] == {"rdkit": "2024.03.5"} and v["prep"] == {"rdkit": "2024.03.5"}

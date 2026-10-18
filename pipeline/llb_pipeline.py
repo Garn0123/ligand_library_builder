@@ -196,6 +196,15 @@ def now() -> str:
     return dt.datetime.now().isoformat(timespec="seconds")
 
 
+def code_version() -> str:
+    """The checkout's commit now (code can be pulled mid-run), '+dirty' if modified."""
+    head = subprocess.run(["git", "-C", str(LLB_ROOT), "rev-parse", "--short", "HEAD"],
+                          capture_output=True, text=True).stdout.strip() or "unknown"
+    dirty = subprocess.run(["git", "-C", str(LLB_ROOT), "status", "--porcelain", "--untracked-files=no"],
+                           capture_output=True, text=True).stdout.strip()
+    return head + ("+dirty" if dirty else "")
+
+
 def read_tsv(p: Path) -> list[dict]:
     if not p.exists():
         return []
@@ -590,17 +599,21 @@ def write_report(run: Run) -> None:
     att = read_tsv(run.f("attrition.tsv"))
     lines = [f"# Library run {run.name}", "",
              f"Started {run.state['started']}, finished {run.state.get('finished', '')}. "
-             f"LLB {run.spec['versions'].get('llb_commit', '?')}.", "",
+             f"LLB at start: {run.spec['versions'].get('llb_commit', '?')[:12]} "
+             f"(per stage below).", "",
              "## Attrition (molecules, by heavy-atom bin)", "",
              "| " + " | ".join(att[0].keys()) + " |" if att else "",
              "| " + " | ".join("---" for _ in att[0]) + " |" if att else ""]
     lines += ["| " + " | ".join(r.values()) + " |" for r in att]
-    lines += ["", "## Stages", "", "| stage | status | jobs | retries | result |",
-              "| --- | --- | --- | --- | --- |"]
+    lines += ["", "## Stages", "",
+              "Code: the LLB commit each stage ran with (code pulled mid-run shows up here).", "",
+              "| stage | status | code | jobs | retries | result |",
+              "| --- | --- | --- | --- | --- | --- |"]
     for st in STAGES:
         s = run.stage(st)
-        lines.append(f"| {st} | {s['status']} | {' '.join(s.get('jobs', []))} | "
-                     f"{s.get('retries', 0)} | {json.dumps(s.get('result', {}))} |")
+        lines.append(f"| {st} | {s['status']} | {' '.join(s.get('commits', []))} | "
+                     f"{' '.join(s.get('jobs', []))} | {s.get('retries', 0)} | "
+                     f"{json.dumps(s.get('result', {}))} |")
     if run.state.get("overrides"):
         lines += ["", "## Overrides after a stop", ""]
         lines += [f"- {o['at']}: {o['key']} = {o['value']}" for o in run.state["overrides"]]
@@ -648,6 +661,7 @@ def stop_stage(run: Run, stage: str, err: Stop) -> int:
 
 def advance(run: Run) -> int:
     """Move the run forward as far as it can go now; idempotent."""
+    commit = code_version()
     for stage in STAGES:
         s = run.stage(stage)
         if s["status"] == "done":
@@ -657,6 +671,8 @@ def advance(run: Run) -> int:
             return 3
         try:
             if s["status"] == "check":                  # resumed after a threshold stop
+                if commit not in s.setdefault("commits", []):
+                    s["commits"].append(commit)
                 check = INLINE[stage][1] if stage in INLINE else GATE[stage]
                 s.update(result=check(run), status="done", ended=now())
                 run.save()
@@ -676,11 +692,14 @@ def advance(run: Run) -> int:
                         raise Stop("collect", f"{len(missing)} unfinished but nothing could be "
                                               f"resubmitted, e.g. {missing[:5]}")
                     s.update(jobs=s["jobs"] + ids, attempt=ids, retries=1, submitted_epoch=epoch)
+                    s.setdefault("commits", []).append(commit)
                     s.setdefault("control", []).append(submit_control(run, ids, stage == "db2"))
                     run.save()
                     print(f"{stage}: {len(missing)} unfinished; resubmitted once at twice the time")
                     return 0
                 s.update(result=GATE[stage](run), status="done", ended=now())
+                if commit not in s.setdefault("commits", []):
+                    s["commits"].append(commit)
                 run.save()
                 continue
             # pending, or in_progress: a control job ended during this inline stage
@@ -691,6 +710,8 @@ def advance(run: Run) -> int:
                 if s["status"] == "in_progress":
                     print(f"{stage}: the last control job ended during it; picking it up")
                 s["status"] = "in_progress"
+                if commit not in s.setdefault("commits", []):
+                    s["commits"].append(commit)
                 run.save()
                 do(run)
                 s.update(result=check(run), status="done", ended=now())
@@ -703,6 +724,8 @@ def advance(run: Run) -> int:
                 run.save()
                 continue
             s.update(status="running", jobs=ids, attempt=ids, retries=0, submitted_epoch=epoch)
+            if commit not in s.setdefault("commits", []):
+                s["commits"].append(commit)
             s["control"] = [submit_control(run, ids, stage == "db2")]
             run.save()
             print(f"{stage}: submitted {' '.join(ids)}; a control job continues when it ends")
@@ -730,10 +753,17 @@ def versions(runner: Runner, cluster: dict) -> dict:
         out["db2_converter_commit"] = g.stdout.strip()
     for env in ("PREP", "PKA", "QUPKAKE", "DB2C"):
         rc, text = runner.llb_capture("env", env, "python", str(LLB_ROOT / "common" / "versions.py"))
-        try:
-            out[env.lower()] = json.loads(text.strip().splitlines()[-1])
-        except (ValueError, IndexError):
-            out[env.lower()] = {"error": text.strip()[-200:]}
+        # the JSON line, wherever it is: `module load` banners can print after it
+        found = None
+        for line in reversed(text.splitlines()):
+            line = line.strip()
+            if line.startswith("{"):
+                try:
+                    found = json.loads(line)
+                    break
+                except ValueError:
+                    continue
+        out[env.lower()] = found if found is not None else {"error": text.strip()[-300:]}
     return out
 
 
