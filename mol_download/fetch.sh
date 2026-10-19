@@ -1,11 +1,13 @@
 #!/bin/bash
-# fetch.sh -- download one ZINC22 tranche file (3D .db2.tgz or 2D .smi.gz), idempotently and safely.
+# fetch.sh -- download one ZINC22 tranche file (3D .db2.tgz or 2D .smi.gz, or a
+# per-tranche id list .txt), idempotently and safely.
 #
 # Usage:  ./fetch.sh https://files.docking.org/zinc22/zinc-22a/H05/.../X.db2.tgz
 #         ./fetch.sh https://files.docking.org/zinc22/2d/H17/H17M100.smi.gz
 #
 # Exit codes:
-#   0  file present and passes gzip -t (either already had it, or fetched it)
+#   0  file present and valid (either already had it, or fetched it): gzip -t
+#      for archives; for a .txt id list, non-empty, ends in a newline, not HTML
 #   8  permanent HTTP failure (404/403/410) -- tranche does not exist, logged
 #      to permanent.tsv, do not retry
 #   *  transient failure after MAX_ATTEMPTS -- logged to failed.tsv, retry later
@@ -27,10 +29,20 @@ PERMANENT_TSV="${PERMANENT_TSV:-permanent.tsv}"
 
 out="${url#"$BASE"}"
 
+# gzip -t for archives. A plain-text id list has no checksum: require it to be
+# non-empty, end in a newline (wget stops mid-line when a connection drops) and
+# not be an HTML error page.
+valid() {
+    case "$1" in
+        *.txt) [[ -s "$1" && -z "$(tail -c1 "$1")" ]] && ! head -c 64 "$1" | grep -qi '<' ;;
+        *)     [[ -s "$1" ]] && gzip -t "$1" 2>/dev/null ;;
+    esac
+}
+
 # --- already complete? -------------------------------------------------------
 # gzip -t is the real test. An existence check is not enough: a dropped
 # connection leaves a short file that looks fine to [[ -s ]].
-if [[ -s "$out" ]] && gzip -t "$out" 2>/dev/null; then
+if valid "$out"; then
     exit 0
 fi
 
@@ -54,7 +66,7 @@ for (( attempt=1; attempt<=MAX_ATTEMPTS; attempt++ )); do
     rm -f "$err"
 
     # Success means exit 0 AND a valid archive on disk.
-    if (( rc == 0 )) && [[ -s "$out" ]] && gzip -t "$out" 2>/dev/null; then
+    if (( rc == 0 )) && valid "$out"; then
         exit 0
     fi
 
