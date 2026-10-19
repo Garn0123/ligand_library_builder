@@ -8,11 +8,15 @@ one id per line). Output, in --out (default plan/):
 
     wanted.tsv        zinc_id  bin  tranche          the ids this plan is for
     idlist_urls.txt   per-(tranche, charge, generation) id lists of every tranche
-                      the ids fall in -- the cheap first download (~17 bytes/id)
-    estimate.tsv      per bin: ids, tranches, id-list GB, and the db2 bill three ways:
-                        all     every chunk in a touched tranche (upper bound)
-                        expect  expected bytes of the chunks that actually hold an id
-                        per_id  expect / expected ids with a 3D build
+                      the ids fall in, for groups that have 3D chunks (~17 bytes/id).
+                      Only needed without --no-idlists in index.py groups.
+    estimate.tsv      per bin, for the catalogued cells (catalog.py --fraction G):
+                        ids_with_3d  expected ids ZINC built (all cells)
+                        findable     of those, in the catalogued cells (~ G x)
+                        idlist_GB / sidecar_GB  id lists / sidecars of the touched tranches
+                        db2_all_TB     every catalogued chunk in a touched tranche
+                        db2_expect_TB  expected bytes of the chunks that hold an id
+                        db2_MB_per_id  expect / findable
     rejected.txt      names that are not ZINC22 ids (hashed 'Z...' names, SMILES...)
 
 The expectation needs the share of ids with a ZINC 3D build at all (LLB samples
@@ -69,6 +73,9 @@ def main() -> None:
     ids, rejected = read_ids(a.ids)
     (a.out / "rejected.txt").write_text("".join(f"{x}\n" for x in rejected))
     chunks = read_tsv(a.catalog / "chunks.tsv")
+    mode = a.catalog / "catalog.mode"
+    g = float(dict(x.split("=", 1) for x in mode.read_text().split())["fraction"]) \
+        if mode.exists() else 1.0
     idlists = read_tsv(a.catalog / "idlists.tsv")
     cat_bins = {c["bin"] for c in chunks}
     tranches_by_bin = defaultdict(set)
@@ -93,12 +100,15 @@ def main() -> None:
         fh.writelines(f"{z}\t{b}\t{t}\n" for z, b, t in wanted)
 
     touched = set(per_tranche)
+    # only groups with 3D chunks: several generations publish id lists but no db2
+    has3d = {(c["gen"], c["tranche"], c["charge"]) for c in chunks}
+    idlists = [r for r in idlists if (r["gen"], r["tranche"], r["charge"]) in has3d]
     urls = sorted(r["url"] for r in idlists if r["tranche"] in touched)
     (a.out / "idlist_urls.txt").write_text("".join(f"{u}\n" for u in urls))
 
     ids3d = Counter()              # tranche -> molecules in ZINC 3D (id lists, ~5% high)
     for r in idlists:
-        ids3d[r["tranche"]] += int(r["approx_ids"])
+        ids3d[r["tranche"]] += int(r["approx_ids"]) / g
     if a.p3d == "auto":
         twod = twod_ids({t[:3] for t in touched})
         p3d = {t: min(1.0, ids3d[t] / twod[t]) if twod.get(t) else 0.0 for t in touched}
@@ -121,8 +131,9 @@ def main() -> None:
         e["ids"] += k
         e["tranches"] += 1
         e["ids_3d"] += k * p3d[t]
+        e["found"] += k * p3d[t] * g            # those in the catalogued cells
         cs = by_tranche.get(t, [])
-        tot_side = sum(s for _, s in cs) or 1
+        tot_side = sum(s for _, s in cs) / g or 1   # the whole tranche, sampled or not
         k3 = k * p3d[t]
         for db2, side in cs:
             e["all"] += db2
@@ -130,20 +141,20 @@ def main() -> None:
             # P(chunk holds >= 1 of the k3 ids), each landing in proportion to molecules
             e["expect"] += db2 * (1 - (1 - side / tot_side) ** k3)
     with open(a.out / "estimate.tsv", "w") as fh:
-        fh.write("bin\tids\ttranches\tids_with_3d\tidlist_GB\tsidecar_all_GB\t"
+        fh.write("bin\tids\ttranches\tids_with_3d\tfindable\tidlist_GB\tsidecar_GB\t"
                  "db2_all_TB\tdb2_expect_TB\tdb2_MB_per_id\n")
         tot = Counter()
         for b in sorted(est):
             e = est[b]
             tot.update(e)
-            fh.write(f"{b}\t{e['ids']:.0f}\t{e['tranches']}\t{e['ids_3d']:.0f}\t"
+            fh.write(f"{b}\t{e['ids']:.0f}\t{e['tranches']}\t{e['ids_3d']:.0f}\t{e['found']:.0f}\t"
                      f"{e['idlist_bytes'] / 1e9:.2f}\t{e['sidecar_all'] / 1e9:.1f}\t"
                      f"{e['all'] / 1e12:.2f}\t{e['expect'] / 1e12:.2f}\t"
-                     f"{e['expect'] / max(e['ids_3d'], 1) / 1e6:.0f}\n")
-        fh.write(f"all\t{tot['ids']:.0f}\t{tot['tranches']}\t{tot['ids_3d']:.0f}\t"
+                     f"{e['expect'] / max(e['found'], 1) / 1e6:.0f}\n")
+        fh.write(f"all\t{tot['ids']:.0f}\t{tot['tranches']}\t{tot['ids_3d']:.0f}\t{tot['found']:.0f}\t"
                  f"{tot['idlist_bytes'] / 1e9:.2f}\t{tot['sidecar_all'] / 1e9:.1f}\t"
                  f"{tot['all'] / 1e12:.2f}\t{tot['expect'] / 1e12:.2f}\t"
-                 f"{tot['expect'] / max(tot['ids_3d'], 1) / 1e6:.0f}\n")
+                 f"{tot['expect'] / max(tot['found'], 1) / 1e6:.0f}\n")
 
     print(f"{len(ids):,} ZINC ids ({len(rejected):,} other names -> rejected.txt); "
           f"{len(wanted):,} in catalogued bins", file=sys.stderr)

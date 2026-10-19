@@ -14,6 +14,7 @@ Layout (2026-10, varies by generation, so the walk does not assume one):
                                      .../...-N-<g>aaaba.solv.tgz   same members
 
   <g>  generation a..z ("zinc-22f").  <s>  a chunk-group directory (a/, b/, ...).
+  chunk ids vary in length by generation: faaaba, yaaaaa, but qaa in zinc-22q.
   N    net charge: J=-4 K=-3 L=-2 M=-1 N=0 O=+1 P=+2 Q=+3.
 
 Every member of a chunk is H20/H20P200/xx/yy/ZINCk...<id>.<n>.<charge>.<ext>, and
@@ -22,6 +23,14 @@ makes index.py cheap: list the sidecar, not the db2.
 
 Sizes are Apache's rounded human sizes ("276M"): good to ~1%, not exact.
 
+Listing is the expensive part for the server: H18-22 holds ~1M chunks (5 files
+each) and a full crawl is ~40 h at -j 4. --fraction G lists only a seeded random
+G of the (generation, tranche) cells -- the whole cell, every chunk in it -- so
+everything downstream (sidecars, db2) also scales by G, and the LLB parents that
+fall in the sampled cells are an unbiased cluster sample of all of them. Raising G
+later with the same --seed keeps every cell already listed. The choice is recorded
+in catalog.mode and plan.py scales its estimates by it.
+
 Outputs (in --out, default catalog/):
     chunks.tsv   gen bin tranche charge chunk db2_url db2_bytes pdbqt_bytes solv_bytes
     idlists.tsv  gen bin tranche charge url bytes approx_ids   (ids = bytes / 17)
@@ -29,10 +38,13 @@ Outputs (in --out, default catalog/):
     summary.tsv  per gen x bin: chunks, db2 bytes, sidecar bytes, approx ids
 
 Usage:
-    python3 catalog.py --heavy 18-30 --out catalog            # ~10-20k listings, ~1-2 h
+    python3 catalog.py --heavy 18-22 --out catalog --fraction 0.05   # ~2-3 h at -j 2
+    python3 catalog.py --heavy 18-30 --out catalog                    # everything: days
     python3 catalog.py --heavy 18-30 --out catalog --summary  # re-summarise only
 
-stdlib only, python3 >= 3.8. Two listing requests in flight at most.
+stdlib only, python3 >= 3.8. Two listing requests in flight by default. Mind the
+server: a 4-connection crawl on 2026-10-19 ended in TLS resets from files.docking.org
+for ~15 minutes. If listings start failing, stop, wait, and resume with -j 1.
 """
 from __future__ import annotations
 
@@ -48,6 +60,9 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from zid import rank  # noqa: E402
+
 BASE = "https://files.docking.org/zinc22/"
 AUTH = "gpcr:xtal"          # published on ZINC's own index page (fetch.sh uses it too)
 MAX_ATTEMPTS = 4
@@ -56,7 +71,7 @@ GENERATIONS = "abcdefghijklmnopqrstuvwxyz"
 # <td><a href="NAME">...</a>   </td><td align="right">2024-08-24 23:41  </td><td align="right">276M</td>
 ROW = re.compile(r'<a href="([^"?/][^"]*)">[^<]*</a>\s*</td>\s*<td align="right">[^<]*</td>\s*'
                  r'<td align="right">\s*([^<]*?)\s*</td>')
-CHUNK = re.compile(r"^(H(\d\d)[MP]\d{3})-([A-Z])-([a-z]{6})\.(db2|pdbqt|solv)\.tgz$")
+CHUNK = re.compile(r"^(H(\d\d)[MP]\d{3})-([A-Z])-([a-z]+)\.(db2|pdbqt|solv)\.tgz$")
 IDLIST = re.compile(r"^(H(\d\d)[MP]\d{3})-([A-Z])\.([a-z])\.txt$")
 TRANCHE_DIR = re.compile(r"^H\d\d[MP]\d{3}/$")
 GROUP_DIR = re.compile(r"^[a-z]/$")
@@ -143,7 +158,7 @@ class Catalog:
             self.chunks_fh.flush(); self.ids_fh.flush()
             self.done_fh.write(tranche_url + "\n"); self.done_fh.flush()
 
-    def run(self, bins: list[str], jobs: int) -> None:
+    def run(self, bins: list[str], jobs: int, fraction: float, seed: str) -> None:
         tranches = []
         for g in GENERATIONS:
             top = f"{BASE}zinc-22{g}/"
@@ -153,7 +168,9 @@ class Catalog:
                     continue
                 url = f"{top}{hbin}/"
                 ts = [url + n for n, _ in listing(url, self.delay) if TRANCHE_DIR.match(n)]
-                log(f"zinc-22{g} {hbin}: {len(ts)} tranche dirs")
+                kept = [t for t in ts if rank(t, seed) < fraction]
+                log(f"zinc-22{g} {hbin}: {len(ts)} tranche dirs, {len(kept)} sampled")
+                ts = kept
                 tranches += [(g, hbin, t) for t in ts]
         todo = [t for t in tranches if t[2] not in self.done]
         log(f"{len(tranches)} tranche dirs, {len(todo)} still to list")
@@ -213,12 +230,24 @@ def main() -> None:
     ap.add_argument("--heavy", default="18-30", help="heavy-atom bins, e.g. 18-30 or 20")
     ap.add_argument("--out", type=Path, default=Path("catalog"))
     ap.add_argument("-j", "--jobs", type=int, default=2,
-                    help="listing requests in flight (default 2; keep it small)")
+                    help="listing requests in flight (default 2; never above 4)")
     ap.add_argument("--delay", type=float, default=0.2, help="seconds before each request")
     ap.add_argument("--summary", action="store_true", help="only rebuild chunks.tsv/summary.tsv")
+    ap.add_argument("--fraction", type=float, default=1.0,
+                    help="list only this seeded random share of (generation, tranche) cells")
+    ap.add_argument("--seed", default="llb")
     a = ap.parse_args()
     if not a.summary:
-        Catalog(a.out, a.delay).run(parse_bins(a.heavy), a.jobs)
+        mode = a.out / "catalog.mode"
+        if mode.exists():
+            old = dict(x.split("=", 1) for x in mode.read_text().split())
+            if old["heavy"] != a.heavy or old["seed"] != a.seed or float(old["fraction"]) > a.fraction:
+                sys.exit(f"{a.out} was started with {old}. Same --heavy and --seed, and a "
+                         f"--fraction at least as large (it then lists only the new cells), "
+                         f"or a new --out.")
+        a.out.mkdir(parents=True, exist_ok=True)
+        mode.write_text(f"heavy={a.heavy}\nfraction={a.fraction}\nseed={a.seed}\n")
+        Catalog(a.out, a.delay).run(parse_bins(a.heavy), a.jobs, a.fraction, a.seed)
     finish(a.out)
 
 

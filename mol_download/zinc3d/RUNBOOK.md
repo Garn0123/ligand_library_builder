@@ -1,70 +1,110 @@
 # ZINC22's own 3D db2s for LLB's molecules: runbook
 
-Goal: for every ZINC22 parent in an LLB library (H18-22 now, H18-H30 next),
-get the db2 record(s) ZINC itself built, so the same molecules can be docked
-from both sources and compared. Nothing here has been run on Great Lakes yet.
-Duo means John runs every command. The tools were tested end to end on a laptop
-against files.docking.org, on real H30 chunks (curl standing in for wget).
+Goal: for the ZINC22 parents of an LLB library (H18-22 now, H18-H30 next), get
+the db2 records ZINC itself built, so the same molecules can be docked from both
+sources and compared.
+
+Nothing here has run on Great Lakes yet. Duo means John runs every command.
+The tools were tested end to end on a laptop against files.docking.org, on real
+H30 chunks: catalog, plan, both index passes, extract and collect. curl stood in
+for wget, which the laptop lacks. The extracted members matched the archives
+byte for byte.
 
 ## The short version
 
-- **The full H18-H30 set is out of reach: @FULL_TB@ TB** in @FULL_CHUNKS@ chunks
-  (catalog of 2026-10-19, table below). Every bin is spread over several
-  generations (zinc-22a … y), and zinc-22c (H30), d, f and others are huge.
-- **So fetch only the chunks that hold LLB's ids.** A ZINC22 id gives its tranche
-  (bin + logP) but not its generation, charge or chunk. Two cheap downloads
-  find the exact chunk:
-  1. per-(tranche, charge, generation) **id lists** (`H20P200-N.f.txt`, ~17 bytes per id), then
-  2. each candidate chunk's **`.pdbqt.tgz` sidecar**. It holds the db2's exact
-     member list (`H20/H20P200/0A/MA/ZINCkq00000f0AMA.0.K.pdbqt`) at ~1% of
-     the db2's bytes.
-- **The catch:** LLB's parents are a uniform draw from ZINC22 2D, so nearly every
-  parent sits in a different ~100-300 MB chunk. Each covered parent costs a whole
-  chunk, about **@MB_PER_ID@ MB per parent** (estimate below). For the 50k H18-22
-  library that is **~@EXPECT_50K_TB@ TB** for every parent that has a ZINC 3D build.
-  Not every parent has one: only **~@P3D_PCT@%** do (the rest are 2D-only in ZINC).
-- **Recommendation:** fetch with a byte budget. `index.py chunks --budget-gb`
-  picks chunks greedily by parents covered per byte. **500 GB covers ~@COVER_500@
-  parents** of H18-22, enough for a same-molecule comparison, and takes ~@HOURS_500@
-  of download. Spend more only if the comparison needs it. A cheaper design
-  ("chunk-first", at the end) needs new LLB builds.
+- **Downloading the full set is impossible.** ZINC22 3D for H18-H30 is
+  **~1.8 PB** of `.db2.tgz`, H18-22 alone **~390 TB**. These are estimates from
+  2026-10-19, good to perhaps ±50% (table below). Every bin is spread over up to
+  25 generations (`zinc-22a` … `y`) and ~1M+ chunks of 0.1-0.7 GB each.
+- **An id names its tranche, not its file.** `ZINCk5000003UMKO` → H20 (`k`),
+  logP bucket M000 (`5`). The generation, charge and chunk are not in the id.
+  Each chunk has a `.pdbqt.tgz` sidecar with exactly the db2's member names
+  (`H20/H20M000/0L/mS/ZINCk50000040LmS.0.L.pdbqt`) at **0.48%** of the bytes.
+  Listing sidecars gives the exact id → chunk index.
+- **The catch: uniform parents mean one chunk per parent.** LLB's parents are a
+  uniform draw from ZINC22 2D, so almost every parent sits in its own chunk.
+  Each covered parent costs a whole chunk, **~0.43 GB** for H18-22. Covering
+  every parent of the 50k H18-22 library would take **~17 TB** of db2 plus
+  1.8 TB of sidecars and ~1M directory listings. Most H18-22 parents do have a
+  ZINC 3D build: ~100% for H18-21 and ~55% for H22, so ~80% of the library.
+- **Recommendation: sample cells.** `catalog.py --fraction G` lists only a
+  seeded random share G of the (generation, tranche) cells. Every later cost
+  scales with G, and the parents that fall in those cells are an unbiased
+  (cluster) sample of the library. **G = 0.03 → ~1,200 parents for ~0.5 TB of
+  db2 + ~55 GB of sidecars**, about a day end to end. Raise G later with the
+  same seed and nothing already done is repeated.
 
-## Sizes (catalog of 2026-10-19, Apache's rounded sizes)
+## Sizes (2026-10-19)
 
-@SIZE_TABLE@
+| bin | ids listed (M) | measured TB | total TB (est.) | ZINC 3D / ZINC 2D |
+|---|---:|---:|---:|---:|
+| H18 | 259 | 1.6 | 22 | ~1 |
+| H19 | 446 | 12.1 | 49 | ~1 |
+| H20 | 866 | 0.2 | 80 | ~1 |
+| H21 | 912 | 0.4 | 100 | 0.88 |
+| H22 | 1,067 | 0.5 | 135 | 0.56 |
+| H23 | 1,165 | 0.9 | 181 | 0.35 |
+| H24 | 1,903 | 1.5 | 416 | 0.34 |
+| H25 | 1,405 | 1.0 | 277 | 0.14 |
+| H26 | 1,480 | 3.4 | 327 | 0.10 |
+| H27 | 13 | 0.1 | 3 | ~0 |
+| H28 | 7 | 0.1 | 2 | ~0 |
+| H29 | 449 | 0.1 | 192 | 0.01 |
+| H30 | 20 | 6.6 | 7 | 0.09 |
+| **all** | **9,994** | **28.5** | **~1,790** | |
 
-`db2_TB` is what files.docking.org holds for the bin across all generations.
-`sidecar_GB` is the `.pdbqt.tgz` total, which is what an exact index of
-*everything* would cost. `ids_M` counts the per-tranche id lists in millions.
-Those lists run ~5% above what was actually built (zinc-22a H20P200 N: 10,163
-listed, 9,670 built).
+How these were obtained (inputs in `estimate_2026-10-19/`):
 
-## Estimate for LLB-sized id sets
+- **Measured** = 33 (generation, bin) cells crawled completely: 75,756 chunks
+  in zinc-22a, b, c, d and f (H18-19).
+- **Total** adds every other cell as ids × the bin's bytes per id × a
+  per-generation factor. The factor (0.7-2.8) is measured on one mid-logP
+  tranche of that generation.
+- **ids listed** = the generations' per-bin id lists (`H20.txt`). These run
+  ~5% above what was built (zinc-22a H20P200 N: 10,163 listed, 9,670 built).
+- **3D / 2D** compares those ids with the zinc22/2d tranche sizes at 11.7
+  bytes per SMILES line. It reads above 1 for H18-20, where SMILES are shorter.
+  Read it as "nearly all".
 
-From `plan.py` on the 9,773 druglike_10k parents
-(`llb_validation_2026-10/druglike_10k`), H18-22 and drawn the same way as the
-production library (`sample_2d.py --total`). The 50k column scales by 5 under
-the same model (it is not linear: chunks start to be shared):
+The last column matters for the H18-H30 library. ZINC has built only ~1/3 of
+H23-24, ~1/10 of H25-26 and almost none of H27-H29. Most heavy LLB parents
+have no ZINC db2 to compare against, whatever is downloaded.
 
-@ESTIMATE_TABLE@
+## What a budget buys (50k H18-22 library)
 
-`per_id` is MB of db2 per parent with a 3D build. `p3d` is estimated from
-the 2D tranche sizes. `index.py groups` measures it exactly in step 3, so the
-real numbers are known after ~@IDLIST_GB@ GB of id lists, before any big
-download.
+Parents per bin follow `sample_2d.py --total` (druglike_10k: H18 5%, H19 9%,
+H20 16%, H21 24%, H22 46%). That gives ~40,000 parents with a ZINC 3D build,
+at a molecule-weighted chunk of 0.25 GB (H18) to 0.5 GB (H22).
 
-Time: one connection to files.docking.org did ~14 MB/s (sample_2d.py,
-2026-09). At 4 connections that is 1 TB in ~5 h if the server scales and
-~20 h if it does not. Extraction is gzip-bound, ~50-100 MB/s of archive per
-core, so 1 TB is ~5 core-h spread over the array.
+| G (`--fraction`) | parents found | listing | sidecars | db2 | download time |
+|---:|---:|---:|---:|---:|---|
+| 0.01 | ~400 | ~1 h | ~18 GB | ~0.17 TB | ~2-4 h |
+| **0.03** | **~1,200** | **~2-3 h** | **~55 GB** | **~0.5 TB** | **~5-12 h** |
+| 0.06 | ~2,400 | ~5 h | ~110 GB | ~1.0 TB | ~10-24 h |
+| 0.12 | ~4,800 | ~10 h | ~220 GB | ~2.0 TB | ~1-2 days |
+| 1 | ~40,000 | ~3 days | ~1.8 TB | ~17 TB | weeks |
+
+Assumptions behind the columns:
+
+- **Listing** assumes `-j 2`, from the crawl's measured ~500 chunks/min at
+  `-j 4`.
+- **Download time** runs from 4 × 14 MB/s (one connection's measured speed,
+  sample_2d.py 2026-09) to ~15 MB/s total (if the server does not scale), plus
+  ~1 s per sidecar file.
+- **Extraction** is gzip-bound, ~50-100 MB/s of archive per core, so ~2-5
+  core-h per TB, spread over the array.
+- **Cluster sampling makes small G noisy.** Cell sizes are very uneven, so
+  the parent count at small G varies around these numbers. `plan.py` prints
+  the real expectation for the cells actually listed (`estimate.tsv`:
+  `findable`, `db2_expect_TB`).
 
 ## One-time setup
 
 ```bash
 # config/hpc.env (or $LLB_CONFIG): the account is maom2 since 2026-10-16
 grep -E '^(LLB_ACCOUNT|LLB_PARTITION|WGET|PARALLEL|PREP_ENV|QUPKAKE_ENV)=' $(llb root)/config/hpc.env
-#   LLB_ACCOUNT=maom2   WGET=wget   PARALLEL=parallel (module load or conda)
-#   PREP_ENV (or QUPKAKE_ENV) must have python >= 3.8; these scripts are stdlib only
+#   LLB_ACCOUNT=maom2    WGET=wget    PARALLEL=parallel
+#   PREP_ENV (or, if empty, QUPKAKE_ENV) needs python >= 3.8; the scripts are stdlib only
 
 # compute nodes must reach files.docking.org (fetch.sbatch checks again)
 srun -A maom2 -p standard -t 5 curl -sI https://files.docking.org/zinc22/ | head -1
@@ -79,120 +119,126 @@ git fetch && git checkout feat/zinc22-db2
 
 ## Run
 
-One landing directory on scratch holds the mirror (`zinc22/...`), the plan and
-the logs. Every command below runs from it.
+One landing directory on scratch holds the mirror (`zinc22/...`), catalog,
+plan and logs. Every command runs from it.
 
 ```bash
-R=/scratch/maom_root/maom99/johnbick/2026_10_zinc3d
-mkdir -p $R && cd $R
+R=/scratch/maom_root/maom99/johnbick/2026_10_zinc3d_h18_22
+mkdir -p $R/logs && cd $R
+P=/scratch/maom_root/maom99/johnbick/2026_10_08_build_small_mols/<library run>/parents/parents.tsv
 ```
 
-### 0. Catalog (login node, ~1-1.5 h, listings only)
+### 0. Catalog a sample of cells (SLURM, listings only)
 
 ```bash
-llb zinc3d-catalog --heavy 18-30 --out catalog -j 4     # resumable: rerun to continue
+sbatch -A maom2 -p standard -c 2 --mem=4G -t 24:00:00 -o logs/catalog_%j.out \
+  --wrap "llb zinc3d-catalog --heavy 18-22 --fraction 0.03 --out catalog -j 2"
+# when it ends:
 cat catalog/summary.tsv
 ```
 
-Or start from the 2026-10-19 snapshot committed beside this file and skip
-the crawl:
-
-```bash
-mkdir -p catalog && for f in chunks idlists; do
-  gzip -dc $(llb root)/mol_download/zinc3d/catalog_2026-10-19/$f.tsv.gz > catalog/$f.tsv; done
-```
+It is resumable: resubmit the same command after a timeout. Do not go above
+`-j 4`. A 4-connection crawl on 2026-10-19 ended in ~15 minutes of TLS resets
+from the server. If `logs/catalog_*.out` shows repeated retries, cancel, wait,
+and resume with `-j 1`.
 
 ### 1. Plan
 
 ```bash
-P=/scratch/maom_root/maom99/johnbick/2026_10_08_build_small_mols/<library run>/parents/parents.tsv
 llb zinc3d-plan --catalog catalog --ids $P --out plan
-cat plan/estimate.tsv        # bytes before anything is fetched
+cat plan/estimate.tsv     # findable parents and the db2 bill, before any download
 ```
 
-`--ids` accepts an LLB `parents.tsv` or `library.tsv` (`zinc_id` column) or a
+`--ids` accepts an LLB `parents.tsv` or `library.tsv` (`zinc_id` column), or a
 plain id list. Hashed non-ZINC names (`Z...`) go to `plan/rejected.txt`.
 
-### 2. Id lists (~@IDLIST_GB@ GB for H18-22)
+### 2. Sidecars
 
 ```bash
-llb zinc3d-fetch plan/idlist_urls.txt          # one SLURM job; logs/fetch_<jobid>.out
-# when it ends:
-llb fetch-status plan/idlist_urls.txt          # "-> retry.txt 0"; permanent 404s are fine
+llb zinc3d-index groups --plan plan --catalog catalog --no-idlists
+llb zinc3d-fetch plan/sidecar_urls.txt                # one SLURM job; logs/fetch_<id>.out
+llb fetch-status plan/sidecar_urls.txt                # done at "-> retry.txt 0"
 ```
 
-### 3. Groups, then sidecars
+`--no-idlists` takes every catalogued chunk of every tranche a parent falls
+in. For a large uniform draw that is the right call: the per-group id lists
+would narrow almost nothing. For a small or concentrated id set (a few
+hundred ids, a single bin), fetch the id lists first. They are ~17 bytes per
+id and cut the sidecars to the groups that hold an id:
 
 ```bash
-llb zinc3d-index groups --plan plan --catalog catalog --root .
-#  -> "N of M wanted ids are in a ZINC 3D id list"  (the measured p3d)
-#  -> plan/sidecar_urls.txt and its size
-llb zinc3d-fetch plan/sidecar_urls.txt
+llb zinc3d-fetch plan/idlist_urls.txt
+llb zinc3d-index groups --plan plan --catalog catalog   # also writes groups.tsv, no3d.txt
 ```
 
-### 4. Exact index, then choose what to download
+### 3. Exact index, then the db2s
 
 ```bash
-llb zinc3d-index chunks --plan plan --catalog catalog --root .               # everything
-llb zinc3d-index chunks --plan plan --catalog catalog --root . --budget-gb 500
-cat plan/coverage.tsv        # per bin: wanted, listed, built, covered, chunks, GB, MB/id
+llb zinc3d-index chunks --plan plan --catalog catalog
+cat plan/coverage.tsv     # per bin: wanted, built, covered, chunks, GB, MB per parent
 ```
 
-Rerun `chunks` with a different `--budget-gb` as often as needed. It only
-reads the sidecars. `plan/index.tsv` always lists every built record of every
-wanted id. `plan/db2_urls.txt` is the budgeted selection, and
-`plan/over_budget.txt` holds the ids left out.
+`plan/index.tsv` lists every db2 member ZINC built for a found parent.
+`plan/db2_urls.txt` lists the chunks that hold them.
 
-Once happy, copy the selection under a name that will not change, so the fetch's
-checksum guard means something:
+To cap the download below what the cells found, add `--budget-gb N`.
+Chunks are then taken in seeded random order, so the selection stays
+unbiased. `--greedy` covers more parents per GB, but favours small
+(charged, sparse) chunks. Then fix the list under its own name and fetch:
 
 ```bash
-cp plan/db2_urls.txt plan/db2_urls.500G.txt
-llb zinc3d-fetch plan/db2_urls.500G.txt 4 -- --time=7-00:00:00
+cp plan/db2_urls.txt plan/db2_urls.G003.txt
+llb zinc3d-fetch plan/db2_urls.G003.txt 4 -- --time=7-00:00:00
 ```
 
-Watch scratch while it runs (`df -h .`; `lfs quota -h -u $USER /scratch`).
-The extraction in step 5 can run with `--delete-archive` behind the download,
-so only the not-yet-extracted part has to fit.
+Watch scratch (`df -h .`; `lfs quota -h -u $USER /scratch`). Step 4 with
+`--delete-archive` can run behind the download, so only the part not yet
+extracted has to fit.
 
-### 5. Extract the wanted records
+### 4. Extract
 
 ```bash
-llb zinc3d-extract plan zinc_db2 --delete-archive      # array; logs/extract_<job>_<task>.out
-# resubmit the same command after any failure or timeout; done chunks are skipped
-llb zinc3d-collect --plan plan --out zinc_db2          # -> zinc_db2/records.tsv
+llb zinc3d-extract plan zinc_db2 --delete-archive     # array; logs/extract_<job>_<task>.out
+# resubmit the same command after any failure or timeout: finished chunks are skipped
+llb zinc3d-collect --plan plan --out zinc_db2         # -> zinc_db2/records.tsv + a loss check
 ```
 
-Result:
-
 ```
-zinc_db2/db2/H20/H20P200-N-faaaba.db2.gz   DOCK-ready: only the wanted records of that chunk
+zinc_db2/db2/H20/H20P200-N-faaaba.db2.gz   only the found parents' members: DOCK reads it as is
 zinc_db2/records.tsv                       zinc_id protomer charge m_name n_records out_file
                                            offset bytes archive member sha1
-                                           (offset/bytes: the member inside the unzipped out_file)
 ```
 
-Extraction runs after `index.py chunks` and reads that run's `db2_urls.txt`.
-If the selection changes, use a new `OUT`: `submit_extract.sh` refuses a
-changed plan.
+`submit_extract.sh` pins `plan/index.tsv` and `db2_urls.txt` by sha256.
+After re-planning, use a new OUT.
 
-### 6. Keep
+### 5. Keep
 
 ```bash
-K=/nfs/turbo/umms-maom/johnbick/zzz.libs/zinc22_3d/h18_22_$(date +%Y%m%d)
-mkdir -p $K && rsync -a zinc_db2 plan catalog/summary.tsv $K/
+K=/nfs/turbo/umms-maom/johnbick/zzz.libs/zinc22_3d/h18_22_G003
+mkdir -p $K && rsync -a zinc_db2 plan catalog/summary.tsv catalog/catalog.mode $K/
 ```
 
-The mirror's `.pdbqt.tgz` sidecars (a few GB) can stay on scratch, or be
-deleted. Re-indexing needs them, but they are quick to refetch.
+The scratch mirror (sidecars, any archives not deleted) can go. A larger G
+later needs the sidecars again, so keep them if that is likely.
+
+### More parents later
+
+Raise G in the same catalog directory with the same seed. Only the new cells
+are listed, and fetching skips every file already on disk. Then rerun steps
+1-4. Extraction skips finished chunks only within one OUT, so extract into a
+new OUT, or keep the old one and accept re-extraction.
+
+```bash
+llb zinc3d-catalog --heavy 18-22 --fraction 0.06 --out catalog -j 2   # under sbatch, as above
+```
 
 ## Looking up one LLB parent
 
-`records.tsv` is the join table between LLB parents and ZINC's records:
+`records.tsv` is the join table:
 
 ```bash
-grep -P '^ZINCi500000JIrMs\t' zinc_db2/records.tsv | cut -f1-6
-# zinc_id  protomer  charge  m_name  n_records  out_file
+grep -P '^ZINCi500000JIrMs\t' zinc_db2/records.tsv | cut -f1-8
 ```
 
 ```python
@@ -206,72 +252,76 @@ def zinc_db2(zid, out="zinc_db2"):
                 yield r, g.read(int(r["bytes"])).decode()
 ```
 
-To read one member straight from a still-present archive without extracting
-the rest:
+To read one member from an archive that is still on disk:
 
 ```bash
 tar xzOf zinc22/zinc-22f/H20/H20P200/a/H20P200-N-faaaba.db2.tgz H20/H20P200/0A/MA/ZINCkq00000f0AMA.0.N.db2
 ```
 
-Not in `records.tsv`? Check where the id was dropped, in this order:
-- `plan/rejected.txt`: not a ZINC id.
-- `plan/no3d.txt`: in no 3D id list. ZINC has no 3D build of this molecule.
-- `plan/listed_not_built.txt`: listed, but ZINC's build failed.
-- `plan/over_budget.txt`: built, but left out by `--budget-gb`.
+A parent missing from `records.tsv` was dropped at one of these points:
 
-## Things to know before comparing
+| Where it is | Why |
+|---|---|
+| `plan/rejected.txt` | Not a ZINC id. |
+| Absent from `plan/index.tsv` | Its cell was not sampled. With id lists: in `plan/no3d.txt` (no ZINC 3D at all) or `plan/listed_not_built.txt` (ZINC's build failed). |
+| `plan/over_budget.txt` | Found, but left out by `--budget-gb`. |
+
+## Before comparing
 
 - **Docking names are truncated.** The db2 M line keeps the last 16 characters
   of `ZINC<id>.<protomer>`. `ZINCk50000040LmS.0` is written as
-  `NCk50000040LmS.0`, which is what DOCK reports. Join scores back through
+  `NCk50000040LmS.0`, and that is what DOCK reports. Join scores back through
   `records.tsv:m_name`, never by prefix.
-- **Several records per member, several members per id.** A member is one
-  protomer (`.0`, `.1`, …) at one charge. It holds 1-3+ db2 records, and an id
-  can have members in several charge groups (`ZINCu500000005KS` has `.0.L` and
-  `.1.M`). Score per id = min over all its records, the same rule as for
-  LLB's db2s.
+- **There are several records per member and several members per id.** A
+  member is one protomer at one charge, holding 1-3+ db2 records. In the H30
+  test, 6 members held 16 records. An id can span charge groups:
+  `ZINCu500000005KS` has `.0.L` and `.1.M`. Score per id = min over all its
+  records, as for LLB's db2s.
 - **ZINC protonates differently from LLB.** ZINC's protomers come from its own
-  pipeline (charge letter = the protomer's net charge). LLB's come from
-  QupKake/MolGpKa. That difference is part of what the comparison measures,
-  so do not "fix" it.
-- **One chunk is one tranche × charge × registration batch.** A budgeted
-  selection is biased toward parents that share a chunk with others (greedy
-  by ids per byte), which happens more in small tranches. Check that the
-  covered parents' bin/logP mix still matches the library's
-  (`coverage.tsv`, and `index.tsv`'s tranche column against
-  `plan/wanted.tsv`). If it drifts, rerun with a bigger budget or plain
-  random subsampling.
+  pipeline. The charge letter is the protomer's net charge: J=-4 … N=0 … Q=+3.
+  LLB's protomers come from QupKake/MolGpKa. That difference is part of what
+  the comparison measures.
+- **Check the found subset before trusting it.** Compare its mix with the
+  library's: bin from `coverage.tsv`, logP via `index.tsv:tranche` against
+  `plan/wanted.tsv`. Cluster sampling is unbiased in expectation, but at small
+  G a few huge cells can dominate. If the mix is off, raise G.
 
-## Alternative: chunk-first (cheapest per molecule)
+## Alternative: chunk-first
 
-If thousands of same-molecule pairs are enough and need not be the
-production library's own parents, turn the scheme around. Take a stratified
-random sample of ZINC chunks per bin, extract their ids and SMILES (each
-tranche dir has `<tranche>-<charge>.<gen>.smi.gz` beside the id list), and
-run those SMILES through LLB. One ~250 MB chunk gives ~5,000 molecules, so
-20 chunks per bin for H18-H30 is ~65 GB for ~10^6 molecules, against
-~@MB_PER_ID@ MB per molecule above. The cost moves to LLB builds and extra
-docking of the LLB side (~1.1 core-h per molecule over 3,150 pockets at the
-pilot's 1.28 s), so subsample to the size the comparison needs.
-`catalog/chunks.tsv` plus `extract.py`, with an `index.tsv` written for all
-members (`index.py chunks --all-members` gives `plan/members.tsv.gz`),
-covers the ZINC side.
+If same-molecule pairs need not be the production library's own parents,
+turn it around. Sample ZINC chunks, take their ids and SMILES (the tranche dir
+has `<tranche>-<charge>.<gen>.smi.gz` beside each id list) and build those
+SMILES with LLB. One ~0.3 GB chunk holds ~5,000 molecules, so 20 chunks per bin
+is ~6 GB for ~10^5 molecules per bin. That is ~10^4 times less download per
+molecule.
+
+The cost moves to LLB builds and to docking the LLB side again: ~1.1 core-h
+per molecule over 3,150 pockets at the pilot's 1.28 s. Subsample to the
+comparison's size. On the ZINC side, `catalog.py` → `index.py chunks
+--all-members` → `extract.py` already does the work. Extracting every member
+of a chunk only needs an `index.tsv` built from `members.tsv.gz`.
 
 ## Files
 
 | File | What |
 |---|---|
-| `catalog.py` | Lists files.docking.org: every chunk under the given bins, with db2 and sidecar sizes, and every per-tranche id list. |
-| `plan.py` | Ids → tranches → id lists to fetch, plus a cost estimate. |
-| `index.py groups` | Id lists → (generation, tranche, charge) groups holding each id → sidecar URLs. |
-| `index.py chunks` | Sidecar members → exact chunk per id (`index.tsv`), budgeted `db2_urls.txt`, `coverage.tsv`. |
-| `extract.py` | Streams chunks; wanted members → `db2.gz` per chunk + `records.tsv`. Array-sharded, resumable. |
-| `submit_fetch.sh` / `fetch.sbatch` | One SLURM job: `run.sh` + up to 3 retry passes. The list is checksummed. |
-| `submit_extract.sh` / `extract.sbatch` | Extraction array. The plan is checksummed. |
-| `zid.py` | ZINC22 id → bin/tranche decoding, member-name parsing, id-file reading. |
-| `catalog_2026-10-19/` | Snapshot of the H18-H30 catalog (gzipped TSVs + summary). |
+| `catalog.py` | Lists files.docking.org: chunks (db2 + sidecar sizes) and per-tranche id lists, for all or a seeded sample (`--fraction`) of (generation, tranche) cells. |
+| `plan.py` | Ids → tranches → what to fetch, with an expected bill scaled to the catalogued fraction. |
+| `index.py groups` | Picks the sidecars to fetch: every chunk of the touched tranches (`--no-idlists`), or only the groups whose id lists hold an id. `--fraction` subsamples chunks instead. |
+| `index.py chunks` | Sidecar members → exact chunk per id (`index.tsv`), `db2_urls.txt` (optionally `--budget-gb`), `coverage.tsv`. |
+| `extract.py` | Streams chunks: wanted members → one `db2.gz` per chunk, plus `records.tsv` with offsets. Sharded and resumable. `--collect` merges and checks for losses. |
+| `submit_fetch.sh` / `fetch.sbatch` | One SLURM job: `../run.sh` plus up to 3 retry passes. The list is checksummed; never an array. |
+| `submit_extract.sh` / `extract.sbatch` | The extraction array. The plan is checksummed. |
+| `zid.py` | Id → bin/tranche, member parsing, the seeded `rank()` behind every fraction. |
+| `estimate_2026-10-19/` | Inputs to the size tables: per-(generation, bin) id counts, crawled cells, per-generation calibration. |
 
-Downloads go through the existing `../fetch.sh` / `../run.sh` /
-`../status.sh`. `fetch.sh` now also validates `.txt` id lists: non-empty,
-ends in a newline, not HTML. Everything in `../README.md`'s Gotchas still
-applies.
+Downloads go through `../fetch.sh` / `../run.sh` / `../status.sh`, which also
+handle `.txt` id lists: valid = non-empty, ends in a newline, not HTML. Every
+item in `../README.md`'s Gotchas still applies. Layout quirks found while
+writing this:
+
+- Chunk ids are 6 letters in most generations (`faaaba`) but 3 in zinc-22q
+  (`qaa`).
+- zinc-22e has id lists but almost no 3D.
+- Python's default User-Agent gets HTTP 403 from the server. The scripts set
+  their own.

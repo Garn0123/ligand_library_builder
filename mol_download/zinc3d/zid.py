@@ -22,6 +22,7 @@ member name (records.tsv), never on the M-line name.
 from __future__ import annotations
 
 import csv
+import hashlib
 import re
 from pathlib import Path
 
@@ -29,6 +30,14 @@ B62 = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 ZINC_ID = re.compile(r"^ZINC[0-9A-Za-z]{12}$")
 MEMBER = re.compile(r"(ZINC[0-9A-Za-z]{12})\.(\d+)\.([A-Z])\.(db2|pdbqt|solv)(?:\.gz)?$")
 BASE = "https://files.docking.org/"
+
+
+def rank(key: str, seed: str = "llb") -> float:
+    """Stable pseudo-random number in [0, 1) per key (a URL). Used for every
+    --fraction and for --budget-gb's random order: the same items come first on
+    every rerun, and raising a fraction keeps everything already selected."""
+    h = hashlib.sha1(f"{seed}:{key}".encode()).digest()
+    return int.from_bytes(h[:8], "big") / 2 ** 64
 
 
 def bin_of(zid: str) -> str:
