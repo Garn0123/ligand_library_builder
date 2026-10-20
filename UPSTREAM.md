@@ -248,9 +248,30 @@ llb submit-db2 db2_run library/library.smi --ncpus 36 --nshards 360 -- --time=48
 llb verify-db2 library/library.tsv --outputpath db2_run/out
 ```
 
-Defaults follow the db2_converter notebook (2026-08-27): `-m conformator`,
+Defaults follow the db2_converter notebook (2026-08-27):
 `-n 600 --keep_max_conf --checkstereo --reseth --rotateh --dock38`, round-robin
-shards. One change since: `--mmff restrained` is the default. Conformator left
+shards. Two changes since.
+
+**`-m conformator_bcl`** (since 2026-10-20; the notebook had `conformator`). It
+pools Conformator's and BCL::Conf's conformers. In Xia et al. 2024 (J Comput
+Chem 46:e27516, the db2_converter authors, DOCK 3.7, PoseBusters-filtered
+ensembles), the pair beats either sampler alone:
+
+- top-1 pose within 2 A: 0.57, against 0.45 for Conformator and 0.55 for BCL;
+- DUDE-Z adjusted logAUC: 21.3, against 18.7 and 17.3;
+- EF1: 13.4, against 12.0 and 12.3.
+
+The notebook chose Conformator alone for determinism and half the build time.
+The paper repeated its runs and found the sampling noise didn't change the
+outcome, and the cost is about 2x the db2 stage. lib_h18_22 was built with
+`conformator` and is being rebuilt. With a BCL method, `--pbfilter auto` turns
+on db2_converter's `--PBfilter`, as its README recommends (failure code
+`4PBfilter`). `submit-db2` and every array task run `run_qupkake/check_bcl.py`
+and refuse to start if db2_converter can't find BCL. Without that check, a
+missing BCL would quietly halve the ensembles. `--method conformator` reproduces
+the old builds.
+
+**`--mmff restrained`.** Conformator left
 some of Owen's molecules unrelaxed (an N-H 1.15 A from a C-H in every
 conformer); db2_converter's own `--MMFFopt` fixes that but folds charged
 molecules in vacuum (N+...O- contacts x3). `restrained` runs build_ligand through
@@ -258,7 +279,7 @@ molecules in vacuum (N+...O- contacts x3). `restrained` runs build_ligand throug
 flat-bottom heavy-atom restraints: on 2,735 conformers it cleared 2,008 of 2,011
 clashes and moved heavy atoms 0.27 A. Compare variants on your own conformers
 with `llb mmff-test conformer.NAME.fixed.mol2`. `--mmff on` / `off` give
-db2_converter's plain MMFF / none. `--method`, `--nconf`, `--mmff`, `--ncpus`,
+db2_converter's plain MMFF / none. `--method`, `--pbfilter`, `--nconf`, `--mmff`, `--ncpus`,
 `--nshards`, `--mem-per-cpu` and `--time` override the defaults. For one molecule
 by hand, `llb build-ligand` runs the same launcher (and accepts a relative `-i`). Each array task runs `NCPUS` builds on
 node-local scratch, rsyncs back every 15 minutes, and refuses to start if

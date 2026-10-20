@@ -326,3 +326,18 @@ def test_versions_finds_the_json_before_a_module_banner(tmp_path):
             return 0, 'Loading module\n{"rdkit": "2024.03.5"}\n\n  Provides Chemistry software.\n'
     v = P.versions(R(), {})
     assert v["db2c"] == {"rdkit": "2024.03.5"} and v["prep"] == {"rdkit": "2024.03.5"}
+
+
+def test_db2_builds_with_conformator_bcl_even_for_runs_started_before_the_setting(tmp_path):
+    # lib_h23_30 was started (2026-10-19) before db2_method existed; it must still
+    # build with both samplers, and REPORT.md must say so
+    run, fr = new_run(tmp_path)
+    spec = json.loads(run.f("pipeline.json").read_text())
+    for k in ("db2_method", "db2_pbfilter"):
+        del spec["settings"][k]
+    run.f("pipeline.json").write_text(json.dumps(spec))
+    run, rcs = advance_until_idle(P.Run(run.path, fr), fr)
+    sub = next(c for c in fr.calls if c[0] == "submit-db2")
+    assert sub[sub.index("--method") + 1] == "conformator_bcl"
+    assert sub[sub.index("--pbfilter") + 1] == "auto"
+    assert '"db2_method": "conformator_bcl"' in run.f("REPORT.md").read_text()

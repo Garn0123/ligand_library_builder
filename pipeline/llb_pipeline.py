@@ -52,6 +52,9 @@ DEFAULTS = {
     "qupkake_time": "00:30:00",
     "names_cpus": 16, "names_mem": "32G", "names_time": "03:00:00",
     "db2_ncpus": 8, "db2_names_per_task": 25, "db2_time": "01:00:00", "db2_mmff": "restrained",
+    # conformator + BCL::Conf pooled, PoseBusters filter on (auto). conformator
+    # alone until 2026-10-20; lib_h18_22 was built that way and is rebuilt.
+    "db2_method": "conformator_bcl", "db2_pbfilter": "auto",
     "control_time": "04:00:00", "control_mem": "8G",
     "max_array_tasks": 4500,
     # stop thresholds: the loss fraction above which a stage halts the run instead
@@ -158,6 +161,10 @@ class Run:
         self.pdir = self.path / "pipeline"
         self.spec = json.loads((self.path / "pipeline.json").read_text())
         self.settings = self.spec["settings"]
+        # a run started before a setting existed gets its default (e.g. db2_method,
+        # added 2026-10-20); REPORT.md shows the value actually used
+        for k, v in DEFAULTS.items():
+            self.settings.setdefault(k, json.loads(json.dumps(v)))
         self.state = json.loads((self.pdir / "state.json").read_text())
         self.runner = runner or Runner(self.path, self.pdir / "logs" / "steps.log")
         # thresholds and times changed by `resume --set` apply from then on
@@ -460,7 +467,9 @@ def submit_db2(run: Run, retry: bool) -> list[str]:
             extra = ["--tasks", ranges(failed)]
     rc, out = run.runner.llb_capture("submit-db2", "db2_run", "library/build.smi",
                                      "--ncpus", str(s["db2_ncpus"]), "--nshards", str(nshards),
-                                     "--mmff", s["db2_mmff"], "--time", t, *extra)
+                                     "--mmff", s["db2_mmff"], "--time", t,
+                                     "--method", s["db2_method"], "--pbfilter", s["db2_pbfilter"],
+                                     *extra)
     ids = SUBMITTED.findall(out)
     if rc or not ids:
         raise Stop("run", "llb submit-db2 failed (pipeline/logs/steps.log)")

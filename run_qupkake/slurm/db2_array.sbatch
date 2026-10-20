@@ -49,6 +49,11 @@ check "build_ligand not executable ($BUILD_LIGAND)"             "[[ -x '$BUILD_L
 check "python cannot import rdkit"                             "python -c 'import rdkit'"
 check "build launcher does not import" \
     "python -c 'import sys; sys.path.insert(0, \"$LLB_ROOT/run_qupkake\"); import build_ligand_relaxed'"
+# Runs from before 2026-10-20 have no PBFILTER in config.env: off, as they ran.
+PBFILTER="${PBFILTER:-off}"
+[[ "$PBFILTER" == on ]] && check "posebusters not importable (--PBfilter)" "python -c 'import posebusters'"
+[[ "$METHOD" == *bcl* ]] && check "db2_converter cannot find BCL (method $METHOD)" \
+    "python '$LLB_ROOT/run_qupkake/check_bcl.py'"
 
 AMSOL=$(python -c "from db2_converter.config import config; print(config['all']['AMSOLEXE'])" 2>/dev/null)
 if [[ -n "$AMSOL" ]]; then
@@ -81,6 +86,7 @@ case "$MMFF" in
     restrained) flags="--MMFFopt" ;;
     off)        export LLB_MMFF_VARIANT=db2_converter ;;
 esac
+[[ "$PBFILTER" == on ]] && flags="$flags --PBfilter"
 
 # --- provenance --------------------------------------------------------
 # bcl.sh runs `module purge` and reloads, so what the job ran with is not
@@ -102,6 +108,7 @@ envfile="$RUN/logs/env.task$(printf '%03d' "$SLURM_ARRAY_TASK_ID").txt"
     echo "method      $METHOD"
     echo "nconf       $NCONF"
     echo "mmffopt     $MMFF"
+    echo "pbfilter    $PBFILTER"
     echo "flags       $flags"
     echo "build       ${build_cmd[*]}"
     [[ "$MMFF" == restrained ]] && echo "mmff        ${LLB_MMFF_VARIANT:-eps4r_restrained} max_displ=${LLB_MMFF_MAX_DISPL:-0.3} k=${LLB_MMFF_K:-100}"
