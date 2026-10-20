@@ -1,0 +1,54 @@
+name	group	exp_pka	molgpka_ring_n	qupkake_ring_n	llb_route	llb_molgpka	llb_qupkake	ms_7.4	ms_7.4r1	expected	llb_molgpka_score	llb_production_score	ms_7.4_score	ms_7.4r1_score
+pyridine	alone	5.14	5.13	4.86	qupkake	0	0	0	0	0	correct	correct	correct	correct
+2-methylpyridine	alone	5.94	6.13	5.50	qupkake	0	0	0	0	0	correct	correct	correct	correct
+2-chloropyridine	alone	0.49	1.86	2.46	molgpka	0	0	0	0	0	correct	correct	correct	correct
+2-aminopyridine	alone	6.86	6.88	6.42	qupkake	0,+1	0,+1	0	0	0,+1	correct	correct	incomplete	incomplete
+4-aminopyridine	alone	9.17	6.98	9.49	qupkake	0,+1	+1	+1	+1	+1	exceed	correct	correct	correct
+quinoline	alone	4.85	5.12	4.51	qupkake	0	0	0	0	0	correct	correct	correct	correct
+pyridazine	alone	2.10	2.70	3.18	molgpka	0	0	0	0	0	correct	correct	correct	correct
+pyrimidine	alone	1.30	1.99	2.16	molgpka	0	0	0	0	0	correct	correct	correct	correct
+2-aminopyrimidine	alone	3.54	3.61	3.98	qupkake	0	0	0	0	0	correct	correct	correct	correct
+pyrazine	alone	0.6	1.62	1.81	molgpka	0	0	0	0	0	correct	correct	correct	correct
+2-methylpyrazine	alone	1.5	1.77	2.44	molgpka	0	0	0	0	0	correct	correct	correct	correct
+2_6-dimethylpyrazine	alone	2.5	2.11	2.86	molgpka	0	0	0	0	0	correct	correct	correct	correct
+2-aminopyrazine	alone	3.14	3.62	2.92	qupkake	0	0	0	0	0	correct	correct	correct	correct
+imidazole	alone	6.95	6.78	6.59	qupkake	0,+1	0,+1	0	0	0,+1	correct	correct	incomplete	incomplete
+2-methylimidazole	alone	7.75	7.36	7.44	qupkake	0,+1	0,+1	0	0	0,+1	correct	correct	incomplete	incomplete
+4-methylimidazole	alone	7.45	7.15	6.58	qupkake	0,+1	0,+1	0	0	0,+1	correct	correct	incomplete	incomplete
+benzimidazole	alone	5.53	5.17	4.94	qupkake	0	0	0	0	0	correct	correct	correct	correct
+2-aminothiazole	alone	5.39	4.97	5.30	qupkake	0	0	0	0	0	correct	correct	correct	correct
+benzothiazole	alone	1.2	1.68	2.81	molgpka	0	0	0	0	0	correct	correct	correct	correct
+benzotriazole	alone	1.6		2.16	qupkake	-1,0	0	0	0	0	exceed	correct	correct	correct
+oxazole	alone	NA	1.98	1.99	molgpka	0	0	0	0					
+4-methyloxazole	alone	NA	2.11	2.60	molgpka	0	0	0	0					
+thiazole	alone	NA	2.47	3.33	molgpka	0	0	0	0					
+pyrazole	alone	NA	2.67	3.33	molgpka	0	0	0	0					
+1-methylimidazole	alone	NA	7.04	6.34	qupkake	0,+1	0	0	0					
+1-methyl-1_2_3-triazole	alone	NA	1.28	2.67	molgpka	0	0	0	0					
+1-methyl-1_2_4-triazole	alone	NA	3.03	2.65	molgpka	0	0	0	0					
+1-methyltetrazole	alone	NA	2.49	2.57	molgpka	0	0	0	0					
+1_5-dimethyltetrazole	alone	NA	2.98	3.05	molgpka	0	0	0	0					
+pyridine-guanidine	tethered_guanidine	NA	6.01	10.85	qupkake	+1		+1	+1					
+pyridine-dimethylamine	tethered_dimethylamine	NA	6.29	9.77	qupkake	+1		+1	+1					
+pyridazine-guanidine	tethered_guanidine	NA	5.41	10.55	qupkake	+1		+1	+1					
+pyridazine-dimethylamine	tethered_dimethylamine	NA	5.68	8.54	qupkake	0,+1		+1	+1					
+pyrimidine-guanidine	tethered_guanidine	NA	4.19	10.58	molgpka	+1		+1	+1					
+pyrimidine-dimethylamine	tethered_dimethylamine	NA	5.28	9.32	qupkake	0,+1		+1	+1					
+pyrazine-guanidine	tethered_guanidine	NA	4.68	10.54	molgpka	+1		+1	+1					
+pyrazine-dimethylamine	tethered_dimethylamine	NA	6.09	8.91	qupkake	0,+1		+1	+1					
+imidazole-guanidine	tethered_guanidine	NA	7.50	10.56	qupkake	+1,+2		+1	+1					
+imidazole-dimethylamine	tethered_dimethylamine	NA	6.74	9.07	qupkake	+1		+1	+1					
+oxazole-guanidine	tethered_guanidine	NA	4.71	10.27	molgpka	+1		+1	+1					
+oxazole-dimethylamine	tethered_dimethylamine	NA	4.50	8.62	qupkake	0,+1		+1	+1					
+thiazole-guanidine	tethered_guanidine	NA	6.03	10.65	qupkake	+1		+1	+1					
+thiazole-dimethylamine	tethered_dimethylamine	NA	5.90	8.74	qupkake	0,+1		+1	+1					
+triazole123-guanidine	tethered_guanidine	NA	4.51	10.22	molgpka	+1		+1	+1					
+triazole123-dimethylamine	tethered_dimethylamine	NA	5.25	8.24	qupkake	0,+1		+1	+1					
+triazole124-guanidine	tethered_guanidine	NA	5.46	10.44	qupkake	+1		+1	+1					
+triazole124-dimethylamine	tethered_dimethylamine	NA	5.24	8.86	qupkake	0,+1		+1	+1					
+tetrazole-guanidine	tethered_guanidine	NA	3.05	9.85	molgpka	+1		+1	+1					
+tetrazole-dimethylamine	tethered_dimethylamine	NA	3.05	7.69	qupkake	0,+1		+1	+1					
+ZINCll00000k0wI1	parent	NA	3.10	9.60	molgpka	+1		+1	+1					
+ZINCif00000eX34t	parent	NA	4.14	9.77	molgpka	+1		+1	+1					
+ZINClj00000jFHma	parent	NA	4.17	10.05	molgpka	+1		+1	+1					
+ZINCj500000JdzBJ	parent	NA	2.73	9.25	molgpka	+1		+1	+1					

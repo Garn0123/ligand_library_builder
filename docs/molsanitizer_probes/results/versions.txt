@@ -1,0 +1,5 @@
+MolSanitizer==0.7.4
+numpy==2.5.4
+pandas==3.0.6
+rdkit==2026.9.1
+llb_pka(scratch): rdkit 2024.03.5 torch 2.4.1; MolGpKa 4dc8352; LLB 8c0cff3; python(msani) Python 3.14.6
