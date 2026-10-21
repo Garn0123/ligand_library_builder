@@ -239,20 +239,38 @@ def stage_db2(a):
                 emit("amsol", "FAIL", f"{amsol}: {'; '.join(missing)}", afix)
             else:
                 emit("amsol", "PASS", amsol)
-    if "conformator" in a.method:
-        check_on_path("conformator", "conformator", "FAIL",
-                      f"put conformator on PATH via DB2C_SETUP in {CFG} ({ZBH_URL})")
-    lfix = f"renew or install the UNICON license ({ZBH_URL}); see DB2C_SETUP in {CFG}"
-    unicon = shutil.which("unicon")
+    zbh = os.environ.get("ZBH_DIR", "")
+    if zbh:
+        # ZBH_DIR set: the binaries must be there, whatever PATH says
+        zfix = f"ZBH_DIR={zbh} in {CFG} must hold the unicon and conformator binaries ({ZBH_URL})"
+        found = {}
+        for name in ("conformator", "unicon"):
+            p = os.path.join(zbh, name)
+            if os.path.isfile(p) and os.access(p, os.X_OK):
+                emit(name, "PASS", p)
+                found[name] = p
+            else:
+                emit(name, "FAIL", f"{p}: {'not executable' if os.path.exists(p) else 'missing'}",
+                     zfix)
+        unicon = found.get("unicon")
+    else:
+        if "conformator" in a.method:
+            check_on_path("conformator", "conformator", "FAIL",
+                          f"put conformator on PATH via DB2C_SETUP in {CFG}, or set ZBH_DIR "
+                          f"({ZBH_URL})")
+        unicon = shutil.which("unicon")
+        if unicon:
+            emit("unicon", "PASS", unicon)
+        else:
+            emit("unicon", "FAIL", "unicon not on PATH",
+                 f"put unicon on PATH via DB2C_SETUP in {CFG}, or set ZBH_DIR ({ZBH_URL})")
+    lfix = f"renew or install the UNICON license ({ZBH_URL}); see ZBH_LICENSE / DB2C_SETUP in {CFG}"
     if unicon:
-        emit("unicon", "PASS", unicon)
         rc, out = run([unicon])
         status, detail = license_status(out, dt.date.today())
         emit("unicon_license", status, detail, lfix)
     else:
-        emit("unicon", "FAIL", "unicon not on PATH",
-             f"put unicon on PATH via DB2C_SETUP in {CFG} ({ZBH_URL})")
-        emit("unicon_license", "FAIL", "not checked: unicon not on PATH", lfix)
+        emit("unicon_license", "FAIL", "not checked: no unicon", lfix)
     check_on_path("singularity", "singularity", "WARN", "")
 
 

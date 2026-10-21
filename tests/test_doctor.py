@@ -221,6 +221,86 @@ def test_node_reruns_under_srun_and_keeps_exit_code(machine):
         str(ROOT / "bin/llb"), "doctor", "--stage", "host"]
 
 
+def test_drap_uses_the_bundled_copy_unless_drap_dir(machine):
+    machine["keys"]["DRAP_DIR"] = ""
+    rc, out, _ = llb_doctor(machine, "--stage", "host")
+    assert lines(out)[("host", "drap")] == "PASS" and rc == 0
+    assert "run_qupkake/validate_names.py (bundled copy)" in out
+    machine["keys"]["DRAP_DIR"] = machine["tmp"] / "nodrap"
+    rc, out, _ = llb_doctor(machine, "--stage", "host")
+    assert lines(out)[("host", "drap")] == "FAIL" and rc == 1
+    assert "or empty it to use the bundled" in out
+
+
+def zbh_dir(path, unicon=True, conformator=True):
+    """A ~/ZBH-shaped directory: one INI-style file per tool."""
+    path.mkdir(parents=True, exist_ok=True)
+    if unicon:
+        (path / "unicon.lic").write_text("[license]\nunicon=SECRETKEY1\n")
+    if conformator:
+        (path / "conformator.lic").write_text("[license]\nconformator = SECRETKEY2\n")
+    return path
+
+
+def test_zbh_license_checked_only_when_set(machine):
+    _, out, _ = llb_doctor(machine, "--stage", "host")
+    assert ("host", "zbh_license") not in lines(out)
+    lic = machine["tmp"] / "ZBH"
+    machine["keys"]["ZBH_LICENSE"] = lic
+    rc, out, _ = llb_doctor(machine, "--stage", "host")
+    assert lines(out)[("host", "zbh_license")] == "FAIL" and rc == 1
+    assert f"ZBH_LICENSE={lic}: does not exist" in out
+    assert f"fix: copy your ~/ZBH directory to {lic}" in out
+    zbh_dir(lic)
+    rc, out, _ = llb_doctor(machine, "--stage", "host")
+    assert lines(out)[("host", "zbh_license")] == "PASS" and rc == 0
+    assert "SECRETKEY" not in out
+
+
+@pytest.mark.parametrize("make, want", [
+    (lambda p: zbh_dir(p), None),
+    (lambda p: zbh_dir(p, conformator=False), "no [license] conformator= key"),
+    (lambda p: zbh_dir(p, unicon=False, conformator=False), "no [license] unicon= or conformator="),
+    (lambda p: p.write_text("[license]\nunicon=x\n"), "not a directory"),
+    (lambda p: (p.mkdir(), (p / "a").write_text("[other]\nunicon=x\nconformator=y\n")),
+     "no [license] unicon= or conformator="),
+])
+def test_zbh_license_directory_contents(tmp_path, make, want):
+    p = tmp_path / "ZBH"
+    make(p)
+    got = doctor.zbh_license_problem(str(p))
+    assert (got is None) if want is None else (want in got)
+    assert "SECRETKEY" not in (got or "") and "=x" not in (got or "")
+
+
+def test_user_file_overlays_hpc_env(machine):
+    machine["keys"]["LLB_ACCOUNT"] = "nobody"
+    user = machine["tmp"] / "users" / "tester.env"
+    user.parent.mkdir()
+    user.write_text("LLB_ACCOUNT=maom99\nZBH_LICENSE=/no/such/ZBH\n")
+    rc, out, _ = llb_doctor(machine, "--stage", "host")
+    got = lines(out)
+    assert got[("host", "account")] == "PASS"             # the user's account, not the site's
+    assert f"+ {user}" in out                              # the config line names both files
+    assert got[("host", "zbh_license")] == "FAIL" and f"set ZBH_LICENSE in {user}" in out
+
+
+def test_site_default_license_missing_only_warns(tmp_path):
+    site = tmp_path / "site"
+    doc = doctor.Doctor()
+    doctor.host_checks(doc, {"LLB_CONFIG": str(site / "hpc.env"), "LLB_SITE": str(site),
+                             "USER": "tester", "ZBH_LICENSE": f"{site}/licenses/tester/ZBH",
+                             "PATH": ""}, None)
+    (c,) = [c for c in doc.checks if c["check"] == "zbh_license"]
+    assert c["status"] == "WARN" and "site default" in c["detail"]
+    zbh_dir(site / "licenses/tester/ZBH")
+    doc = doctor.Doctor()
+    doctor.host_checks(doc, {"LLB_CONFIG": str(site / "hpc.env"), "LLB_SITE": str(site),
+                             "USER": "tester", "ZBH_LICENSE": f"{site}/licenses/tester/ZBH",
+                             "PATH": ""}, None)
+    assert [c["status"] for c in doc.checks if c["check"] == "zbh_license"] == ["PASS"]
+
+
 FAKE_PYTHON = '''#!/bin/bash
 # build_ligand stand-in: one NAME.db2.gz per input line; anything else -> real python
 if [[ "$1" == *build_ligand_relaxed.py ]]; then
@@ -295,3 +375,29 @@ def test_pka_without_molgpka_dir(machine):
     got = run_env(machine, "pka", extra={"MOLGPKA_DIR": ""})
     assert got["molgpka_weights"]["status"] == "FAIL"
     assert "MOLGPKA_DIR" in got["molgpka_weights"]["fix"]
+
+
+def test_db2_zbh_dir_preferred_over_path(machine):
+    exe(machine["bin"] / "unicon", f"cat <<'EOF'\n{banner(-3)}EOF")      # PATH: expired
+    zbh = machine["tmp"] / "zbh"
+    exe(zbh / "unicon", f"cat <<'EOF'\n{banner(300)}EOF")                # ZBH_DIR: valid
+    exe(zbh / "conformator", "true")
+    got = run_env(machine, "db2", "--method", "conformator", "--pbfilter", "off",
+                  extra={"ZBH_DIR": str(zbh)})
+    assert got["unicon"]["detail"] == str(zbh / "unicon")
+    assert got["conformator"]["status"] == "PASS"
+    assert got["unicon_license"]["status"] == "PASS"
+
+
+def test_db2_zbh_dir_missing_binaries_fail(machine):
+    zbh = machine["tmp"] / "zbh"
+    zbh.mkdir()
+    (zbh / "unicon").write_text("")                                      # not executable
+    exe(machine["bin"] / "conformator", "true")                          # on PATH: ignored
+    got = run_env(machine, "db2", "--method", "rdkit", "--pbfilter", "off",
+                  extra={"ZBH_DIR": str(zbh)})
+    assert got["conformator"]["status"] == got["unicon"]["status"] == "FAIL"
+    assert got["unicon"]["detail"].endswith("not executable")
+    assert got["conformator"]["detail"].endswith("missing")
+    assert "ZBH_DIR=" in got["unicon"]["fix"]
+    assert got["unicon_license"]["status"] == "FAIL"

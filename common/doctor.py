@@ -65,7 +65,11 @@ def default_stages(cfg):
 
 
 def config_path():
-    return os.environ.get("LLB_CONFIG") or str(ROOT / "config" / "hpc.env")
+    """Where llb_load_config looks first (common/env.sh); for messages only."""
+    if os.environ.get("LLB_CONFIG"):
+        return os.environ["LLB_CONFIG"]
+    site = ROOT.parent / "hpc.env"
+    return str(site if site.is_file() else ROOT / "config" / "hpc.env")
 
 
 def load_config():
@@ -102,16 +106,51 @@ def run(cmd, timeout=30, env=None):
     return p.returncode, p.stdout
 
 
+def zbh_license_problem(path):
+    """None if PATH is a usable ZBH license directory (what ~/ZBH is: one INI-style
+    file per tool, `[license]` then `unicon=<key>` / `conformator=<key>`), else
+    why not. The keys themselves are never returned."""
+    if not os.path.exists(path):
+        return "does not exist"
+    if not os.path.isdir(path):
+        return "not a directory (ZBH_LICENSE is the directory that plays ~/ZBH's role)"
+    if not os.access(path, os.R_OK | os.X_OK):
+        return "directory not readable"
+    found = set()
+    for name in sorted(os.listdir(path)):
+        f = os.path.join(path, name)
+        if not os.path.isfile(f):
+            continue
+        try:
+            text = open(f, encoding="utf-8", errors="replace").read()
+        except OSError:
+            continue
+        section = None
+        for line in text.splitlines():
+            line = line.strip()
+            if line.startswith("[") and line.endswith("]"):
+                section = line[1:-1].strip().lower()
+            elif section == "license" and "=" in line:
+                key, value = (x.strip() for x in line.split("=", 1))
+                if key.lower() in ("unicon", "conformator") and value:
+                    found.add(key.lower())
+    missing = [t for t in ("unicon", "conformator") if t not in found]
+    if missing:
+        return f"no [license] {' or '.join(t + '=' for t in missing)} key in any file there"
+    return None
+
+
 # ---- host ---------------------------------------------------------------------
 
 def host_checks(doc, cfg, err):
     cpath = (cfg or {}).get("LLB_CONFIG") or config_path()
     if cfg is None:
         doc.add("host", "config", "FAIL", err,
-                f"cp {ROOT}/config/hpc.env.example {cpath} and edit it, or set LLB_CONFIG "
-                "(UPSTREAM.md §0)")
+                f"cp {ROOT}/config/hpc.env.example {cpath} and edit it "
+                f"({ROOT.parent}/hpc.env for the site layout), or set LLB_CONFIG (UPSTREAM.md §0)")
     else:
-        doc.add("host", "config", "PASS", cpath)
+        user_cfg = cfg.get("LLB_USER_CONFIG", "")
+        doc.add("host", "config", "PASS", cpath + (f" + {user_cfg}" if user_cfg else ""))
         env = cfg
         acct, part = cfg.get("LLB_ACCOUNT", ""), cfg.get("LLB_PARTITION", "")
         if not acct:
@@ -154,12 +193,37 @@ def host_checks(doc, cfg, err):
                     f"no etc/profile.d/conda.sh under CONDA_BASE='{base}' ({', '.join(envs)} set)",
                     f"set CONDA_BASE in {cpath}")
         drap = cfg.get("DRAP_DIR", "")
-        v = os.path.join(drap, "stage4", "validate_names.py")
-        if drap and os.path.isfile(v):
-            doc.add("host", "drap", "PASS", v)
+        if not drap:
+            v = ROOT / "run_qupkake" / "validate_names.py"
+            if v.is_file():
+                doc.add("host", "drap", "PASS", f"{v} (bundled copy)")
+            else:
+                doc.add("host", "drap", "FAIL", f"{v} missing",
+                        "restore it: git checkout -- run_qupkake/validate_names.py")
         else:
-            doc.add("host", "drap", "FAIL", f"no stage4/validate_names.py under DRAP_DIR='{drap}'",
-                    f"set DRAP_DIR in {cpath} to the DRAP checkout (UPSTREAM.md §4)")
+            v = os.path.join(drap, "stage4", "validate_names.py")
+            if os.path.isfile(v):
+                doc.add("host", "drap", "PASS", v)
+            else:
+                doc.add("host", "drap", "FAIL", f"no stage4/validate_names.py under DRAP_DIR='{drap}'",
+                        f"set DRAP_DIR in {cpath} to a DRAP checkout, or empty it to use "
+                        "the bundled run_qupkake/validate_names.py")
+        lic = cfg.get("ZBH_LICENSE", "")
+        if lic:
+            site = cfg.get("LLB_SITE", "")
+            user = cfg.get("USER") or os.environ.get("USER", "")
+            problem = zbh_license_problem(lic)
+            if not problem:
+                doc.add("host", "zbh_license", "PASS", f"{lic}: unicon and conformator keys")
+            elif site and lic == f"{site}/licenses/{user}/ZBH" and not os.path.exists(lic):
+                # only the site default, and nothing reads ZBH_LICENSE until the shims land
+                doc.add("host", "zbh_license", "WARN",
+                        f"{lic} (the site default) does not exist; copy your ~/ZBH directory there")
+            else:
+                doc.add("host", "zbh_license", "FAIL", f"ZBH_LICENSE={lic}: {problem}",
+                        f"copy your ~/ZBH directory to {lic}, or set ZBH_LICENSE in "
+                        f"{cfg.get('LLB_USER_CONFIG') or cpath} (per-user: users/$USER.env beside hpc.env)")
+
     try:
         with tempfile.NamedTemporaryFile(dir=os.getcwd(), prefix=".llb_doctor."):
             pass

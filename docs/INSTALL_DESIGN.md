@@ -5,7 +5,7 @@ commands, and every problem shows up in minutes, not after a 1–2 h smoke test.
 Third-party tools may still need installing, but LLB's own glue must be simple.
 
 Status: design agreed with John on 2026-10-20, in an interview; the decisions are
-numbered Q1–Q29 below. Phase 1 (`llb doctor` + the `preflight` stage) is implemented; phases 2–4 are not.
+numbered Q1–Q29 below. Phases 1 (`llb doctor`, `preflight`) and 2 (site layout, except the ZBH shims) are implemented; 3–4 are in progress.
 
 ## Why
 
@@ -46,7 +46,7 @@ $LLB_SITE/                       e.g. /scratch/group/<project>/llb (never ~)
   hpc.env                        cluster settings, shared by the site's users
   users/<user>.env               per-user: ZBH_LICENSE, LLB_MAIL, optional LLB_ACCOUNT
   zbh/                           UNICON + conformator binaries (each user brings their own, or the site shares them)
-  licenses/<user>/               default home for each user's ZBH license file
+  licenses/<user>/ZBH/           default ZBH_LICENSE: a copy of the user's ~/ZBH (one [license] file per tool)
 ```
 
 `llb` reads `$LLB_SITE/hpc.env` (found as `../hpc.env` from its own checkout),
@@ -68,7 +68,7 @@ local `apptainer build --fakeroot`, which ACES allows on compute nodes.
 | xtb 6.4.1, built from source in `/opt/xtb`; `XTBPATH=/opt/xtb/bin/xtb` | release tag + sha256 | LGPL-3 |
 | `db2_converter` env (RDKit 2024.03.5, openbabel, ambertools, posebusters 0.2.9; db2_converter 63d6656) | `environments/db2_converter.linux-64.lock` | — |
 | AMSOL 7.1, DOCK-patched (`amsol7.1_patched` as shipped in db2_converter, SIZES.i raised) | db2_converter commit | Apache-2.0, plus NOTICE stating the patch |
-| BCL 4.3.1 static (`bcl-apps-static.exe` + the data `BCL_ROOT` needs) in `/opt/bcl` | release asset + sha256 (below) | MIT |
+| BCL 4.3.1 static (`bcl-apps-static.exe` + the data `BCL_ROOT` needs) in `/opt/bcl` | GHCR artifact + sha256 (below) | MIT |
 | `llb_pka` env (RDKit 2024.03.5, CPU torch, dimorphite_dl) | `environments/llb_pka.linux-64.lock` | — |
 | MolGpKa 4dc8352 (code, weights, SMARTS) in `/opt/MolGpKa` | commit; `molgpka.py` already checks the weights' sha256 | MIT |
 | `conda` stub → micromamba | — | — |
@@ -91,17 +91,16 @@ FileNotFoundError. The image therefore ships a `conda` stub that forwards to
 micromamba and sets `XTBPATH`. QupKake itself stays unpatched.
 
 **BCL (Q23, Q24).** BCL isn't built in CI. John's working static build is
-packed once as `bcl-4.3.1-static-linux-x86_64.tar.gz`, attached to an LLB
-GitHub release (`toolchain-assets`), and the image build downloads it and
-checks its sha256. `container/bcl/BUILD.md` records how it was built, including
+packed once as `bcl-4.3.1-static-linux-x86_64.tar.xz` and pushed with ORAS to
+`ghcr.io/garn0123/llb-assets:bcl-4.3.1`. At 2.7 GB it is over GitHub's 2 GiB
+limit per release file. The image build pulls it and checks its sha256. `container/bcl/BUILD.md` records how it was built, including
 the OOM, bzip2 and static-init workarounds, so it can be rebuilt. The image
 sets `BCL_ROOT=/opt/bcl`, puts the binary on PATH, and **never** adds BCL's
 `lib/` to LD_LIBRARY_PATH: that is what shadowed the env's libstdc++/libgomp. A
 `sed` in `%post` points db2_converter's `config.py` BCLBASE/BCL at `/opt/bcl`,
 the same edit db2_converter's README tells every user to make. If the static
 binary turns out to need `lib/`, a wrapper sets it for BCL's own process only.
-*To measure during implementation:* the install's size. Above ~2 GB it gets its
-own image layer or a separate download.
+Measured 2026-10-21: 2.7 GB unpacked, so the SIF is several GB.
 
 **Versions (Q13).** The checkout holds `container/TOOLCHAIN_VERSION`, the image
 version this code expects. `doctor` and `pipeline start` fail on a mismatch
@@ -130,7 +129,8 @@ $LLB_CONTAINER exec --bind <auto> $LLB_IMAGE micromamba run -n <env> cmd
 - LLB's shims for `unicon` and `conformator` live in the repo
   (`container/shims/`), are put on PATH inside the image, and run the user's
   ZBH binaries with the user's license (`ZBH_LICENSE`, default
-  `$LLB_SITE/licenses/$USER/`) (Q10). The ZBH binaries run in the Ubuntu 22.04
+  `$LLB_SITE/licenses/$USER/ZBH`) (Q10). ZBH keeps licenses in `~/ZBH/`, so the shim
+  runs the tool with `HOME` set to a temp directory whose `ZBH` is `ZBH_LICENSE`. The ZBH binaries run in the Ubuntu 22.04
   image directly, so the `ubuntu2204.sif` wrappers go away.
 - `<TOOL>_SETUP` / `_ENV` / `_EXE` stay as per-tool overrides, e.g. to point one
   tool at a native env to test a new QupKake.
@@ -245,7 +245,7 @@ constraints from a live run. Phases in order:
    fold the db2 preflight into `doctor --stage db2`.
 2. **Site layout**: `$LLB_SITE`, `users/$USER.env`, `ZBH_LICENSE`, ZBH shims,
    the copied `validate_names.py`, the cluster profiles.
-3. **Image**: `container/llb.def`, lockfiles, the BCL release asset +
+3. **Image**: `container/llb.def`, lockfiles, the BCL artifact on GHCR +
    `BUILD.md`, `with_env.sh` image mode, the CI jobs, `TOOLCHAIN_VERSION`, image
    digest in REPORT.md.
 4. **`llb setup`** (+ `--native`), README "Install" replacing "Setup on a new
@@ -269,8 +269,6 @@ activating a license, and having an account on the cluster.
 
 ## Open items
 
-- BCL static install size (measure in phase 3).
-- `container/shims/`: how ZBH reads a license from a path other than the
-  default. John: "can be specified from anywhere"; confirm the exact flag or
-  env var while writing the shim.
+- Push the BCL tarball to GHCR and pin its sha256 (John).
+- Check the ZBH shims' `HOME` trick against the real binaries on a cluster.
 - Follow-up design: splitting one library across clusters and merging it back (Q29).

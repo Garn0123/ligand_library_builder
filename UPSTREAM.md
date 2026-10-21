@@ -23,23 +23,33 @@ step and send it only the molecules MolGpKa can't settle; see
 ## 0. Point the repo at your software (once per machine)
 
 ```bash
-mkdir -p ~/.config/llb && cp <checkout>/config/hpc.env.example ~/.config/llb/hpc.env   # edit it
-export LLB_CONFIG=~/.config/llb/hpc.env                                      # ~/.bashrc
+# the site layout: one directory per cluster, the checkout inside it
+cp $LLB_SITE/ligand_library_builder/config/hpc.env.example $LLB_SITE/hpc.env   # edit it
+$EDITOR $LLB_SITE/users/$USER.env      # per-user: ZBH_LICENSE, LLB_MAIL, optional LLB_ACCOUNT
 llb doctor            # every tool and license, in seconds; --node runs it on a compute node
 ```
 
 `llb pipeline start` runs `llb doctor` as its first stage.
 
-(`config/hpc.env` inside the checkout also works and is gitignored, but a
-config outside it survives a fresh clone.)
+`llb` looks for its config in this order: `LLB_CONFIG` if set, then
+`../hpc.env` beside the checkout (`$LLB_SITE/hpc.env`), then `config/hpc.env`
+inside the checkout (gitignored). Then it reads `users/$USER.env` from the same
+directory, whose keys win, so the cluster settings are shared and only the
+per-user ones are yours. The old setup still works unchanged:
+
+```bash
+mkdir -p ~/.config/llb && cp <checkout>/config/hpc.env.example ~/.config/llb/hpc.env   # edit it
+export LLB_CONFIG=~/.config/llb/hpc.env                                      # ~/.bashrc
+```
 
 Every step reads tool locations from that file: conda env name or
 prefix, an optional executable path, and an optional setup hook run *before*
 activation (`module purge`, `module load ...`, `source ~/env/bcl.sh`). No
 script hard-codes a path. `llb env TOOL CMD` runs any command in a tool's
 environment (TOOL = PREP, QUPKAKE, PKA, DB2C or DOCK), e.g.
-`llb env DB2C which build_ligand`. `DRAP_DIR` points `llb validate-names` at
-the DRAP checkout.
+`llb env DB2C which build_ligand`. `llb validate-names` runs a copy of DRAP's
+checker (`run_qupkake/validate_names.py`); `DRAP_DIR` points it at a DRAP
+checkout instead.
 
 All commands below run from a run directory, with `llb` on `PATH` (next).
 
@@ -50,7 +60,7 @@ in the right environment, against your **current** directory:
 
 ```bash
 export PATH=/nfs/turbo/umms-maom/johnbick/opt/ligand_library_builder/bin:$PATH   # ~/.bashrc
-export LLB_CONFIG=~/.config/llb/hpc.env      # optional: config outside the checkout too
+export LLB_CONFIG=~/.config/llb/hpc.env      # optional: only without a site hpc.env
 mkdir -p /scratch/.../ladder_h14_h28 && cd /scratch/.../ladder_h14_h28
 llb help                                      # every step, in pipeline order
 ```
@@ -67,7 +77,7 @@ commit, uncommitted changes and config in `provenance.<jobid>.txt`.
 | sample | `llb sample` | `mol_download/sample_2d.py` |
 | parents | `llb parents` | `run_qupkake/prepare_parents.py` |
 | QupKake | `llb qupkake`, `llb submit-qupkake` | `qupkake_protomers.py`, `submit_qupkake.sh` |
-| names | `llb names`, `llb validate-names`, `llb check-stereo` | `assign_names.py`, DRAP's `stage4/validate_names.py`, `check_db2_stereo.py` |
+| names | `llb names`, `llb validate-names`, `llb check-stereo` | `assign_names.py`, `validate_names.py` (DRAP's, copied), `check_db2_stereo.py` |
 | db2 build | `llb submit-db2`, `llb verify-db2` | `submit_db2.sh` + `slurm/db2_array.sbatch`, `verify_db2_build.py` |
 | mol2 | `llb mol2` | `db2_to_mol2.py` |
 | chunk | `llb chunk` | `mol_compiler/parallel/submit_chunks.sh` → `submit.slurm` |
@@ -218,7 +228,7 @@ llb reenumerate parents protomers protomers_fixed
 
 ```bash
 llb names --shards-dir protomers --parents parents -o library
-llb validate-names --smi library/library.smi      # DRAP's checker, via DRAP_DIR
+llb validate-names --smi library/library.smi      # DRAP's checker (bundled copy)
 ```
 
 Refuses to run until every shard is `DONE`. Uniqueness is over the whole library,
