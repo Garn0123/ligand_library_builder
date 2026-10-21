@@ -98,7 +98,7 @@ From: ubuntu@sha256:0a9887931b0e38af2e3487ed39e29436b0535c4f3f52e57745baaf79d189
     # ---------------------------------------------------------------- system packages
     # runtime: libgfortran5 (AMSOL and xtb link it), libgomp1, OpenBLAS (xtb), git
     # (pip installs QupKake from git; LLB records its own commit from inside)
-    RUNTIME_PKGS="ca-certificates git libgfortran5 libgomp1 libopenblas0-openmp procps xz-utils bzip2"
+    RUNTIME_PKGS="ca-certificates git rsync libgfortran5 libgomp1 libopenblas0-openmp procps xz-utils bzip2"
     BUILD_PKGS="curl build-essential gfortran cmake libopenblas-openmp-dev"
     apt-get update -q
     apt-get install -y -q --no-install-recommends $RUNTIME_PKGS $BUILD_PKGS

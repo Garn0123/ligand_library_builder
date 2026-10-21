@@ -31,12 +31,18 @@ source "${LLB_ROOT:?config.env has no LLB_ROOT}/common/env.sh" \
 llb_load_config || exit 78
 # Runs from before 2026-10-20 have no PBFILTER in config.env: off, as they ran.
 PBFILTER="${PBFILTER:-off}"
-if ! "$LLB_ROOT/bin/llb" doctor --stage db2 --method "$METHOD" --pbfilter "$PBFILTER"; then
+# (not again after re-running inside the image, below)
+if [[ -z "${LLB_IN_IMAGE:-}" ]] && ! "$LLB_ROOT/bin/llb" doctor --stage db2 --method "$METHOD" --pbfilter "$PBFILTER"; then
     echo "aborting task $SLURM_ARRAY_TASK_ID on $(hostname) -- environment is broken"
     exit 78
 fi
 
 # --- environment -------------------------------------------------------
+# Image mode: the rest of this task runs inside the toolchain image, from the
+# repo's copy of this script (SLURM's spooled copy is not bound there).
+if [[ -z "${LLB_IN_IMAGE:-}" ]] && llb_image_env DB2C >/dev/null; then
+    exec "$LLB_ROOT/common/with_env.sh" DB2C bash "$LLB_ROOT/run_qupkake/slurm/db2_array.sbatch" "$@"
+fi
 # DB2C_SETUP runs BEFORE activation: bcl.sh runs `module purge`, and a purge
 # after activation resets PATH/LD_LIBRARY_PATH out from under the conda env.
 llb_activate DB2C || exit 78

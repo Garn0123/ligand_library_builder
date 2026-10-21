@@ -22,9 +22,16 @@ LLB_ROOT="${LLB_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 # shellcheck source=common/env.sh
 source "$LLB_ROOT/common/env.sh"
 llb_load_config
-llb_activate "$tool"
 [[ -n "${DB2C_SRC:-}" ]] && export DB2C_SRC
 [[ -n "${BUILD_LIGAND_EXE:-}" ]] && export BUILD_LIGAND_EXE
 [[ -n "${DB2TOOL_EXE:-}" ]] && export DB2TOOL_EXE
 [[ -n "${MOLGPKA_DIR:-}" ]] && export MOLGPKA_DIR
+if image_env="$(llb_image_env "$tool")"; then
+    echo "[$tool] env=$image_env image=${LLB_IMAGE}${LLB_IN_IMAGE:+ (already inside)}"
+    # already inside (an array task that re-ran itself there): just switch env
+    [[ -n "${LLB_IN_IMAGE:-}" ]] && exec micromamba run -n "$image_env" "$@"
+    llb_image_exec "$image_env" "$@"
+    exit 2                                   # llb_image_exec only returns on failure
+fi
+llb_activate "$tool"
 exec "$@"

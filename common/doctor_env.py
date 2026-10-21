@@ -266,12 +266,19 @@ def stage_db2(a):
                  f"put unicon on PATH via DB2C_SETUP in {CFG}, or set ZBH_DIR ({ZBH_URL})")
     lfix = f"renew or install the UNICON license ({ZBH_URL}); see ZBH_LICENSE / DB2C_SETUP in {CFG}"
     if unicon:
+        # through the shim when it is first on PATH (as db2_converter will run it),
+        # so the license is read from ZBH_LICENSE exactly as in a build
+        first = shutil.which("unicon")
+        shims = os.path.join(os.path.abspath(ROOT), "container", "shims")
+        if first and os.path.dirname(os.path.abspath(first)) == shims:
+            unicon = first
         rc, out = run([unicon])
         status, detail = license_status(out, dt.date.today())
         emit("unicon_license", status, detail, lfix)
     else:
         emit("unicon_license", "FAIL", "not checked: no unicon", lfix)
-    check_on_path("singularity", "singularity", "WARN", "")
+    if not os.environ.get("LLB_TOOLCHAIN_VERSION"):     # inside the image, ZBH runs directly
+        check_on_path("singularity", "singularity", "WARN", "")
 
 
 def stage_dock(a):

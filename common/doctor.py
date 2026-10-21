@@ -215,8 +215,9 @@ def host_checks(doc, cfg, err):
             problem = zbh_license_problem(lic)
             if not problem:
                 doc.add("host", "zbh_license", "PASS", f"{lic}: unicon and conformator keys")
-            elif site and lic == f"{site}/licenses/{user}/ZBH" and not os.path.exists(lic):
-                # only the site default, and nothing reads ZBH_LICENSE until the shims land
+            elif (site and lic == f"{site}/licenses/{user}/ZBH" and not os.path.exists(lic)
+                  and not cfg.get("LLB_IMAGE") and not cfg.get("ZBH_DIR")):
+                # only the site default, and no shim reads it (ZBH still uses ~/ZBH)
                 doc.add("host", "zbh_license", "WARN",
                         f"{lic} (the site default) does not exist; copy your ~/ZBH directory there")
             else:
@@ -240,6 +241,48 @@ def host_checks(doc, cfg, err):
             doc.add("host", name, "PASS", p)
         else:
             doc.add("host", name, "WARN", f"{exe} not on PATH (needed for {why})")
+
+
+# ---- the toolchain image -----------------------------------------------------------
+
+def image_tools(cfg):
+    """Stages whose tool runs in LLB_IMAGE (its <TOOL>_ENV empty; never dock)."""
+    if not cfg.get("LLB_IMAGE"):
+        return set()
+    return {s for s, t in TOOL.items() if s != "dock" and not cfg.get(f"{t}_ENV")}
+
+
+def image_checks(doc, cfg):
+    """Runtime, image file, toolchain version. False = env stages cannot run here."""
+    img, cpath = cfg["LLB_IMAGE"], cfg.get("LLB_CONFIG", config_path())
+    p = subprocess.run(["bash", "-c", 'source "$LLB_ROOT/common/env.sh" && llb_container'],
+                       env=dict(cfg, LLB_ROOT=str(ROOT)), stdout=subprocess.PIPE,
+                       stderr=subprocess.PIPE, text=True, stdin=subprocess.DEVNULL)
+    rt = p.stdout.strip()
+    if p.returncode or not rt:
+        doc.add("host", "container", "WARN",
+                "no apptainer or singularity here (a login node?); image stages not checked: "
+                "run `llb doctor --node`")
+        return False
+    rc, out = run([rt, "--version"])
+    doc.add("host", "container", "PASS", f"{rt}: {tail(out, 1)}")
+    if not os.path.isfile(img):
+        doc.add("host", "image", "FAIL", f"LLB_IMAGE={img} does not exist",
+                f"pull it (container/README.md) or fix LLB_IMAGE in {cpath}")
+        return False
+    want = (ROOT / "container" / "TOOLCHAIN_VERSION").read_text().strip()
+    rc, out = run([rt, "inspect", "--labels", img], timeout=60)
+    got = re.search(r"org\.llb\.toolchain\.version\W+(\S+)", out or "")
+    if not got:
+        doc.add("host", "image", "FAIL", f"{img}: no toolchain version label ({tail(out, 1)})",
+                "rebuild or re-pull the image (container/README.md)")
+        return False
+    if got.group(1) != want:
+        doc.add("host", "image", "FAIL", f"{img} is toolchain {got.group(1)}; this checkout wants {want}",
+                f"pull llb-toolchain:{want} and point LLB_IMAGE at it in {cpath}")
+        return True
+    doc.add("host", "image", "PASS", f"{img} (toolchain {want})")
+    return True
 
 
 # ---- env stages -------------------------------------------------------------------
@@ -381,6 +424,9 @@ def main(argv=None):
         host_checks(doc, cfg, err)
     skipped = [s for s in stages if s != "host"] if cfg is None else []
     if cfg is not None:
+        in_image = image_tools(cfg) if not os.environ.get("LLB_IN_IMAGE") else set()
+        if in_image and not image_checks(doc, cfg):
+            stages = [s for s in stages if s not in in_image]
         for s in stages:
             if s != "host":
                 env_stage(doc, s, cfg, a.method, pbfilter)

@@ -99,9 +99,14 @@ fi
 
 # ---- environment ---------------------------------------------------------------
 # After the DONE check, so finished shards skip it; doctor activates on its own.
-if ! "$LLB_ROOT/bin/llb" doctor --stage qupkake; then
+if [[ -z "${LLB_IN_IMAGE:-}" ]] && ! "$LLB_ROOT/bin/llb" doctor --stage qupkake; then
     echo "FATAL: llb doctor failed on $(hostname) -- environment is broken" >&2
     exit 2
+fi
+# Image mode: the rest runs inside the toolchain image, from the repo's copy of
+# this script (SLURM's spooled copy is not bound there).
+if [[ -z "${LLB_IN_IMAGE:-}" ]] && llb_image_env QUPKAKE >/dev/null; then
+    exec "$LLB_ROOT/common/with_env.sh" QUPKAKE bash "$LLB_ROOT/run_qupkake/slurm/qupkake_array.sbatch" "$@"
 fi
 llb_activate QUPKAKE
 QK_EXE="$(llb_require_exe QUPKAKE_EXE qupkake)"

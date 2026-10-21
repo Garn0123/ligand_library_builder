@@ -5,7 +5,7 @@ commands, and every problem shows up in minutes, not after a 1–2 h smoke test.
 Third-party tools may still need installing, but LLB's own glue must be simple.
 
 Status: design agreed with John on 2026-10-20, in an interview; the decisions are
-numbered Q1–Q29 below. Phases 1 (`llb doctor`, `preflight`) and 2 (site layout, except the ZBH shims) are implemented; 3–4 are in progress.
+numbered Q1–Q29 below. Phases 1–3 are implemented (the image is untested until CI builds it); phase 4 (`llb setup`) is not.
 
 ## Why
 
