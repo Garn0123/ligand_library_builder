@@ -38,7 +38,9 @@ AMSOL), so a reviewer will ask how LLB compares to it.
    names. It is not a drop-in for LLB's naming contract, though: its stereo
    suffix `NAME.1` is truncated to the last 16 characters in the db2 (shown
    below). Feeding it LLB's stereo-closed, contract-named `build.smi` with
-   `--no-neutralize --no-stereoisomers` keeps the names intact.
+   `--no-neutralize --no-stereoisomers` keeps the names intact. Whether the
+   swap is worth it is a speed vs accuracy question with a concrete test:
+   **section 7**.
 4. **Fixes for LLB that came out of the probes** (each small; details under Test A):
    - (a) biguanides are built as +2;
    - (b) Meldrum's-type CH acids are dropped (a miss DECISIONS already knows about);
@@ -207,13 +209,15 @@ frequency of such inputs in ZINC22, which Test B answers.
 | 2 | **C. measured pKa** | where does LLB sit on the paper's Fig. 7 chart (monoprotic; AZ/NV/VX drug-like)? | ChemRxiv SI Files **S8, S9** (inputs + every program's outputs, so LLB is scored against identical reference states). Fallback without the SI: AZ ChEMBL3301361, Liao & Nicklaus 2009 SI, Settimo 2014 SI, Zheng 2026 IUPAC set, Lee 2008 SI (Reaxys part not public) | the paper's 4-class outcome at its pH convention. **Change LLB if** it is below MS by ≥5 points on a drug-like set, *and* the misses cluster in a class we can fix. Also report LLB's "exceed" rate, which is the price of its population model | per 1,000 molecules: MolGpKa ~10 s, MS ~30 s, QupKake on the ~36% routed ≈ **3.2 CPU-h** → Great Lakes array (1 core/task), everything else on the laptop |
 | 3 | **D. TautoBase** | LLB's tautomer accuracy on the paper's 873 entries | SI File **S7** (or TautoBase, github.com/WahlOliver/tautobase, with the curation in their Supplementary Methods) | 4-class outcome. The expected result is "low, because LLB keeps the input", so the value is the number for a methods section and the list of classes LLB misses. Feeds the decision from B | seconds, laptop |
 | 4 | **E. docking sensitivity** | when the states or tautomers differ, do the **docking scores** differ enough to matter for the training data? | the B disagreements (or a seeded 1,000 of them), each built twice through *LLB's* db2 path (LLB states vs MS states/tautomers), so only the chemistry differs; 30 pockets, one per family, as in the docking pilot | per parent and pocket, Δ(min score over the parent's names); Spearman across pockets. **Change LLB if** a class shows median \|Δ\| > 1 kcal/mol or ρ < 0.9 *and* B/C say MS is right for that class | per 1,000 parents: db2 ≈ 2 × 1.9 names × 52 s ≈ 55 CPU-h + docking ≈ 2 × 1,900 × 30 × 1.28 s ≈ 40 CPU-h → **~100 CPU-h**, Great Lakes. Needs a ~50-line adapter that writes MS states as a merge-style shard so `llb names` closes stereo and assigns names |
-| 5 | **F. MS db2 at scale** | could MS's confgen+db2 replace db2_converter for H23–30 and later: build rate, cost, name and charge integrity? | `library/build.smi` of the drug-like 10k (19,102 names), `msani -i build.smi --no-neutralize --no-stereoisomers --gen3d -f db2 --numconfs 600` | built fraction vs LLB's 18,620/19,102; CPU-h vs LLB's 268; `llb verify-db2` on MS output (charges, names); DOCK6 reads it (`db2tool audit`). **Switch** only if ≥ LLB's build rate, 0 charge mismatches, names intact, and E-style docking on 30 pockets shows no score shift | MS maybe ~3–5 s/name (laptop figure, unverified on GL) → **~20–30 CPU-h**; `msani_batch` or an LLB array |
+| 5 | **F. MS db2 at scale** | could MS's confgen+db2 replace db2_converter for H23–30 and later: build rate, cost, name and charge integrity? | `library/build.smi` of the drug-like 10k (19,102 names), `msani -i build.smi --no-neutralize --no-stereoisomers --gen3d -f db2 --numconfs 600` | built fraction vs LLB's 18,620/19,102; CPU-h vs LLB's 268; `llb verify-db2` on MS output (charges, names); DOCK6 reads it (`db2tool audit`). **Switch** only if ≥ LLB's build rate, 0 charge mismatches, names intact, and E-style docking on 30 pockets shows no score shift | MS: laptop run ≤ ~9 CPU-s per db2 (4 db2s from 3 small molecules, start-up included; unverified on GL) → **≲50 CPU-h**; `msani_batch` or an LLB array. Folded into the section 7 ablation (variant V3) |
 | 6 | **G. Platinum conformers** | does LLB's actual db2 conformer set (Conformator + restrained MMFF + mol2db2 hierarchy) recover bioactive poses as well as raw Conformator and MS? | Platinum Diverse 2017, 2,859 ligands (public) | best heavy-atom RMSD at ≤0.5/1/2 Å; conformer count; CPU-h. **Revisit restrained MMFF** if LLB's ≤0.5 Å recovery drops >5 points below the paper's raw Conformator figure (57%) | LLB ≈ 2,859 × 46 s ≈ **37 CPU-h** (GL); MS ≈ 1.5 h on their hardware |
 | 7 | **H. DUDE-Z enrichment** | end to end, LLB vs MS vs the ZINC reference db2s on 43 protein targets | DUDE-Z (dudez.docking.org): SMILES, grids, reference db2s | adjusted logAUC per target. Low relevance: our targets are RNA pockets and the use is training labels, not enrichment | ~72k molecules × ~1.9 names × 52 s ≈ **~2,000 CPU-h** for LLB + DOCK3.8 runs; run on 5–8 targets first if at all |
 
 Order of work: **B now** (copy the two TSVs before scratch purges). C and D as
-soon as the SI files are downloaded. E only for the classes B and C flag. F
-when planning the next library after H23–30. G and H only if a reviewer asks.
+soon as the SI files are downloaded. E only for the classes B and C flag. F,
+and the speed vs accuracy question generally, go through the section 7 ablation
+once the reinstalled toolchain exists. G only if a reviewer asks. H on a
+handful of targets, as the outside check in section 7.
 
 ## 5. Commands
 
@@ -311,3 +315,145 @@ layout, which is unknown until the files are in hand.
   alternative, "collapse before building", for free. If the docking run's
   `non_first_won_rate` comes out small, that is the design to copy: one name,
   both N configurations in one db2.
+
+## 7. Speed vs accuracy: the db2 ablation
+
+### Where the time goes, and what a faster sampler can save
+
+| stage | per 100k parents | source |
+| --- | --- | --- |
+| triage (MolGpKa) | 0.3 CPU-h | `timing_v6.txt`: 10.7 ms/parent |
+| QupKake (36% routed) | ~320 CPU-h | 31.8 s/routed parent |
+| db2, Conformator alone (the H18–22 build) | ~2,700 CPU-h | 45.8 s median per name (52 s mean) × 1.91 names/parent |
+| db2, **Conformator + BCL** (default since d84b045) | **~5,400 CPU-h, estimated** | the commit says Conformator alone was chosen for "half the build time"; not measured in LLB yet |
+| **docking, all 3,150 pockets** | **~210,000 CPU-h** | pilot: 1.28 s per ligand–pocket × 3,150 × 1.9 names/parent (the H18–22 plan: ~107k core-h for 95,696 names) |
+
+**Docking, not preparation, is the bill.** All of preparation, even with BCL, is
+under 3% of docking the same molecules against 3,150 pockets. So the speed lever
+that matters most is **what preparation hands to docking**: names per parent
+(protomers, stereoisomers, invertomers at ~8%) and conformers per name. Docking
+time grows with both. A faster db2 stage is worth having, but V2 (fewer
+conformers) and V5 (one invertomer) below can save more in docking than any
+sampler swap saves in preparation. The ablation therefore records docking
+CPU-s per ligand–pocket for every variant.
+
+The MolSanitizer paper's Platinum timings (Conformator 6.02 h, MolSanitizer
+1.51 h for 2,859 molecules) time **the sampler only**. That is about 7.6 s per
+molecule for Conformator. An LLB name takes 45.8 s with Conformator alone, so
+roughly **80% of LLB's db2 time is outside the sampler**: restrained MMFF on up
+to 600 conformers, AMSOL, the mol2db2 hierarchy, the chemistry check, start-up
+and I/O.
+
+- **Swapping only the sampler** saves at most about a sixth of the
+  Conformator-only build.
+- **Replacing the whole db2 stage** with MolSanitizer's (sampler, AMSOL port,
+  db2 writer) is what could plausibly turn ~2,700 into several hundred CPU-h,
+  or ~5,400 into ~1,000. The laptop measured ≤ ~9 CPU-s per db2 including
+  AMSOL, on 3 small molecules; that is not a Great Lakes number.
+
+On the accuracy side, the published numbers already point the same way:
+- MolSanitizer reached a DUDE-Z mean adjusted logAUC of **22**.
+- Xia et al., the db2_converter authors (as cited in d84b045), report **21.3**
+  for Conformator+BCL and **18.7** for Conformator alone.
+
+These are different papers' runs, so this suggests rather than shows a tie, and
+it is the gap the ablation closes.
+
+### Step 0: profile the 46 s (≈1 CPU-h, no docking)
+
+Before anything else, time each phase of `build_ligand` on 50 names drawn
+across H18–H22, under the reinstalled toolchain with the current default
+(`conformator_bcl`, PoseBusters filter, restrained MMFF):
+- the sampler(s);
+- MMFF;
+- AMSOL;
+- mol2db2;
+- the chemistry check;
+- everything else.
+
+`run_qupkake/build_ligand_relaxed.py` already replaces `pipeline.mmffopt`
+in-process before `build_ligand.main()`, so it can wrap the other `pipeline`
+functions with timers the same way, without modifying db2_converter. This shows
+which variants below can pay off before anything is docked.
+
+### Variants
+
+All of them take the **same names and protomer SMILES**: the drug-like 10k's
+`library/build.smi`, sampled below. The 3D stage is the only thing that changes,
+except in V6–V7.
+
+| id | variant | what it isolates |
+| --- | --- | --- |
+| V0 | LLB default: Conformator+BCL, PoseBusters filter, restrained MMFF, 600 conformers | reference |
+| V0′ | V0 again, different seed / node | **noise floor**: how much scores move with nothing changed. Every other variant is judged against this, not against zero |
+| V1 | Conformator alone (the old default) | what BCL buys. The v6 db2s of the 10k may already exist on scratch; reuse them if they are still there |
+| V2 | V0 with 200 conformers | how much of the 600 is needed |
+| V3 | MolSanitizer db2 end to end: `msani -i build.smi --no-neutralize --no-stereoisomers --gen3d -f db2 --numconfs 600` | the cheap whole-stage replacement (MolSanitizer's sampler + AMSOL port + writer) |
+| V4 | V3 with MolSanitizer's defaults (2,000 conformers, energy window 25) | whether V3 lost anything by being capped |
+| V5 | one invertomer per group (built from V0's names, first member only) | DECISIONS 10.1's "collapse before building": no build needed, computed from V0's scores as `non_first_won_rate` |
+| V6 | MolGpKa-only chemistry (no QupKake): names whose protomers differ, rebuilt with V0's path | the ~10% QupKake cost |
+| V7 | MolSanitizer chemistry (tautomers + protonation at pH 7.4 ± 1) + V3's db2 | "MolSanitizer instead of LLB", end to end |
+
+### Sample, docking, metrics
+
+- **Sample.** 1,000 parents from the drug-like 10k (seed recorded), drawn
+  proportionally across H18–H22. That is about 1,900 names.
+  - V6 and V7 rebuild only the parents whose states differ (expected to be a few
+    hundred; Test B gives the number).
+- **Docking.** The same 30 pockets as the docking pilot (one per family), with
+  the same DOCK 6.13 protocol and binary.
+  - Score = the minimum over a parent's names per pocket, after invertomer
+    collapse, which is what the training matrix holds.
+- **Metrics, each variant against V0:**
+  - per pocket, Spearman ρ over parents;
+  - top-1% overlap per pocket (the end of the ranking a generative model learns
+    from);
+  - median |Δscore|, and the fraction of parent–pocket pairs with |Δ| > 1;
+  - build success rate (V0: ~98% of names);
+  - charge mismatches from `llb verify-db2`, which must be 0;
+  - db2 CPU-h per name;
+  - docking CPU-s per ligand–pocket (more conformers dock slower);
+  - db2 GB.
+- **Decision rule.**
+  - A cheaper variant is **adopted** if its agreement with V0 is within the
+    V0-vs-V0′ noise floor: ρ no more than 0.02 below the floor, top-1% overlap
+    no more than 5 points below it, build success no more than 0.5 points below
+    V0's, and 0 charge mismatches.
+  - A variant **outside** the noise floor is different, not necessarily worse.
+    Then the outside check decides.
+- **Outside check: DUDE-Z on 6 targets.** Run V0, V3 and V7 only. Pick targets
+  where the MolSanitizer paper saw the largest swings either way: DEF, XIAP,
+  PUR2 and DRD4 (better with MolSanitizer); FABP4 and FA10 (better with the
+  reference). Score with adjusted logAUC.
+
+### Cost
+
+| item | CPU-h |
+| --- | --- |
+| step 0 profiling | ~1 |
+| V0 + V0′ builds (1,900 names × ~90 s, if BCL doubles the time) | ~95 |
+| V2 | ~15 |
+| V3 + V4 | ~5–20 |
+| V6 + V7 rebuilds (few hundred names) | ~10–20 |
+| docking: 8 built variants × 1,900 names × 30 pockets × ~1.3 s | ~170 |
+| **ablation total** | **~300–350, Great Lakes** |
+| DUDE-Z, 6 targets (~10k molecules): V0 about 500, V3 + V7 about 50, plus DOCK3.8 runs | ~550 |
+
+Run DUDE-Z only if the ablation leaves a real choice.
+
+### Inputs, and when to run it
+
+Everything comes from the drug-like 10k run directory (`druglike_10k_v2`):
+`library/build.smi`, `library/library.tsv` and `parents/parents.tsv`, plus the v6
+db2s for V1 if they still exist. The pocket list is the pilot's 30, from
+rna_pipeline `library-docking`.
+
+For DUDE-Z, per target:
+- the active and decoy SMILES;
+- the DOCK3.8 docking files (grids, spheres, INDOCK);
+- the pre-built reference db2s;
+- a DOCK3.8 binary (UCSF academic licence).
+
+**Wait for the reinstall** for every build and every timing. The point is the
+cost of the toolchain that will build H18–H30, so V0 must run on the new image.
+Test B and step 0's sample selection don't depend on it and can start now.
