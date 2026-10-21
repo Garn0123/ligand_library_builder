@@ -1,6 +1,6 @@
 """`llb pipeline`'s state machine, with a fake cluster: FakeRunner plays each llb step
-by writing the files the real step writes, hands out job ids, and can leave QupKake
-shards unfinished or db2 tasks failed. No SLURM, no chemistry."""
+by writing the files the real step writes, hands out job ids, and can fail `llb doctor`,
+leave QupKake shards unfinished or db2 tasks failed. No SLURM, no chemistry."""
 import csv
 import json
 
@@ -22,10 +22,11 @@ class FakeRunner:
     """Parents p0..p(N-1); p0 and p1 routed to QupKake; each parent gets two names."""
 
     def __init__(self, run_dir, n=20, rejected=0, qk_missing_rounds=0, db2_failed_rounds=0,
-                 build_fail=0, silent_missing=0):
+                 build_fail=0, silent_missing=0, doctor_fail_rounds=0):
         self.d, self.n, self.rejected = run_dir, n, rejected
         self.qk_missing_rounds, self.db2_failed_rounds = qk_missing_rounds, db2_failed_rounds
         self.build_fail, self.silent_missing = build_fail, silent_missing
+        self.doctor_fail_rounds = doctor_fail_rounds
         self.calls, self.sbatches, self.next_id = [], [], 100
         self.failed = {}
 
@@ -37,6 +38,21 @@ class FakeRunner:
     def llb(self, step, *args):
         self.calls.append((step, *args))
         d = self.d
+        if step == "doctor":
+            checks = [{"stage": "host", "check": "config", "status": "PASS", "detail": "hpc.env",
+                       "fix": ""},
+                      {"stage": "db2", "check": "unicon_license", "status": "WARN",
+                       "detail": "valid until Friday, 13 November 2026 (24 days)", "fix": ""}]
+            failing = self.doctor_fail_rounds > 0
+            if failing:
+                self.doctor_fail_rounds -= 1
+                checks.append({"stage": "qupkake", "check": "xtb", "status": "FAIL",
+                               "detail": "$XTBPATH=/x/xtb: not executable",
+                               "fix": "build xtb 6.4.1 and set XTBPATH in hpc.env"})
+            (d / args[args.index("--json") + 1]).write_text(json.dumps(
+                {"llb_root": "/llb", "config": "hpc.env", "host": "ac123", "when": "now",
+                 "checks": checks}))
+            return 1 if failing else 0
         if step == "parents":
             pids = [f"p{i}" for i in range(self.n)]
             write_tsv(d / "parents/parents.tsv", [
@@ -108,6 +124,8 @@ class FakeRunner:
             return 0, f"Submitted batch job {jid}\n"
         if step == "timing":
             return 0, "== db2 build: fake\n"
+        if step == "env":                             # common/versions.py in each env
+            return 0, json.dumps({"env": args[0], "rdkit": "2024.03.5"}) + "\n"
         raise AssertionError(step)
 
     # -- SLURM ---------------------------------------------------------------------
@@ -152,8 +170,7 @@ def new_run(tmp_path, **fake):
     settings = json.loads(json.dumps(P.DEFAULTS))
     settings["stop"]["checks"] = 0.05     # the fake library is tiny: 1 excluded of 40 names
     fr = FakeRunner(run_dir, **fake)
-    run = P.create_run(run_dir, [str(tmp_path / "in.smi")], settings, CLUSTER,
-                       {"llb_commit": "abc"}, fr)
+    run = P.create_run(run_dir, [str(tmp_path / "in.smi")], settings, CLUSTER, fr)
     return run, fr
 
 
@@ -341,3 +358,90 @@ def test_db2_builds_with_conformator_bcl_even_for_runs_started_before_the_settin
     assert sub[sub.index("--method") + 1] == "conformator_bcl"
     assert sub[sub.index("--pbfilter") + 1] == "auto"
     assert '"db2_method": "conformator_bcl"' in run.f("REPORT.md").read_text()
+
+
+def resume_here(run, fr, sets=()):
+    """`llb pipeline resume RUN` in this process (submits a control job)."""
+    class A:
+        pass
+    a = A(); a.run, a.set, a.here = str(run.path), list(sets), False
+    orig = P.Run.__init__
+    P.Run.__init__ = lambda self, path, runner=None: orig(self, path, fr)
+    try:
+        P.cmd_resume(a)
+    finally:
+        P.Run.__init__ = orig
+
+
+def test_preflight_runs_doctor_first_and_records_versions(tmp_path):
+    run, fr = new_run(tmp_path)
+    run, rcs = advance_until_idle(run, fr)
+    assert fr.calls[0][0] == "doctor"                  # before any step touches an env
+    doc = fr.calls[0]
+    assert doc[doc.index("--stage") + 1] == "host,prep,pka,qupkake,db2"
+    assert doc[doc.index("--method") + 1] == "conformator_bcl"
+    assert doc[doc.index("--pbfilter") + 1] == "auto"
+    assert doc[doc.index("--json") + 1] == "pipeline/doctor.json"
+    # versions come from the preflight stage now, not from `start`
+    assert [c[1] for c in fr.calls if c[0] == "env"] == ["PREP", "PKA", "QUPKAKE", "DB2C"]
+    assert "versions" not in json.loads(run.f("pipeline.json").read_text())
+    vers = json.loads(run.f("pipeline", "versions.json").read_text())
+    assert vers["db2c"] == {"env": "DB2C", "rdkit": "2024.03.5"} and vers["llb_commit"]
+    assert run.stage("preflight")["result"] == {"host": "ac123", "checks": 2, "warnings": 1,
+                                                "warned": ["db2 unicon_license"]}
+    report = run.f("REPORT.md").read_text()
+    assert "`llb doctor` on ac123: 2 checks, none failed, 1 warning(s)" in report
+    assert '"rdkit": "2024.03.5"' in report
+
+
+def test_preflight_failure_stops_the_run_with_the_fail_lines(tmp_path):
+    run, fr = new_run(tmp_path, doctor_fail_rounds=1)
+    run, rcs = advance_until_idle(run, fr)
+    s = run.stage("preflight")
+    assert rcs[-1] == 3 and s["status"] == "stopped" and s["phase"] == "run"
+    assert "ac123" in s["message"] and "pipeline/doctor.json" in s["message"]
+    assert "FAIL qupkake xtb: $XTBPATH=/x/xtb: not executable" in s["message"]
+    assert "unicon_license" not in s["message"]        # warnings do not stop
+    assert [c[0] for c in fr.calls] == ["doctor"]      # nothing else ran, no versions
+    assert not fr.sbatches and not run.f("pipeline", "versions.json").exists()
+
+
+def test_resume_after_fixing_the_environment_reruns_preflight(tmp_path):
+    run, fr = new_run(tmp_path, doctor_fail_rounds=1)
+    run, rcs = advance_until_idle(run, fr)
+    assert rcs[-1] == 3
+    resume_here(run, fr)                               # the user fixed XTBPATH
+    run, rcs = advance_until_idle(P.Run(run.path, fr), fr)
+    assert [c[0] for c in fr.calls].count("doctor") == 2
+    assert run.stage("preflight")["status"] == "done" and run.state.get("finished")
+    assert run.f("pipeline", "versions.json").exists()
+
+
+def test_a_run_started_before_the_preflight_stage_still_advances(tmp_path, capsys):
+    # state.json and pipeline.json as `start` wrote them before 2026-10-20; stopped
+    # at parents, then resumed
+    run, fr = new_run(tmp_path, rejected=1)
+    spec = json.loads(run.f("pipeline.json").read_text())
+    del spec["versions_file"]
+    spec["versions"] = {"llb_commit": "abc123def456", "db2c": {"rdkit": "2024.03.5"}}
+    run.f("pipeline.json").write_text(json.dumps(spec))
+    state = json.loads(run.f("pipeline", "state.json").read_text())
+    del state["stages"]["preflight"]
+    run.f("pipeline", "state.json").write_text(json.dumps(state))
+    run, rcs = advance_until_idle(P.Run(run.path, fr), fr)
+    assert rcs[-1] == 3 and run.stage("parents")["status"] == "stopped"
+    resume_here(run, fr, ["stop.parents=0.06"])
+    run, rcs = advance_until_idle(P.Run(run.path, fr), fr)
+    assert run.state.get("finished") and run.stage("preflight")["status"] == "done"
+    assert not any(c[0] in ("doctor", "env") for c in fr.calls)   # not run after the fact
+    orig = P.Run.__init__
+    P.Run.__init__ = lambda self, path, runner=None: orig(self, path, fr)
+    try:
+        P.cmd_status(type("A", (), {"run": str(run.path)})())
+    finally:
+        P.Run.__init__ = orig
+    assert "preflight" in capsys.readouterr().out
+    report = run.f("REPORT.md").read_text()
+    assert "LLB at start: abc123def456" in report
+    assert "started before the preflight stage" in report
+    assert '"llb_commit": "abc123def456"' in report

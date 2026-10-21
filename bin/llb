@@ -48,6 +48,8 @@
 #   llb chunk RUNDIR DB2DIR [opts]  mol_compiler/parallel/submit_chunks.sh  (no env)
 #
 # Utilities:
+#   llb doctor [--stage LIST] [--node] [--smoke] [--json FILE]
+#                             is this machine set up? one line per check, with the fix
 #   llb env TOOL CMD...       run CMD in TOOL's env (QUPKAKE, DB2C, PREP, DOCK, PKA)
 #   llb squeeze               filter stdin: collapse repeated RDKit warnings
 #                             (e.g. llb env DB2C build_ligand ... 2>&1 | llb squeeze)
@@ -111,6 +113,7 @@ case "$step" in
     clash-report)   exec python3 "$Q/clash_report.py" "$@" ;;
     mmff-test)      exec "$W" PREP python "$Q/mmff_variants.py" "$@" ;;
     chunk)          exec "$LLB_ROOT/mol_compiler/parallel/submit_chunks.sh" "$@" ;;
+    doctor)         exec python3 "$LLB_ROOT/common/doctor.py" "$@" ;;
     env)            exec "$W" "$@" ;;
     squeeze)        exec awk -f "$LLB_ROOT/common/squeeze_log.awk" ;;
     root)           echo "$LLB_ROOT" ;;

@@ -25,7 +25,10 @@ step and send it only the molecules MolGpKa can't settle; see
 ```bash
 mkdir -p ~/.config/llb && cp <checkout>/config/hpc.env.example ~/.config/llb/hpc.env   # edit it
 export LLB_CONFIG=~/.config/llb/hpc.env                                      # ~/.bashrc
+llb doctor            # every tool and license, in seconds; --node runs it on a compute node
 ```
+
+`llb pipeline start` runs `llb doctor` as its first stage.
 
 (`config/hpc.env` inside the checkout also works and is gitignored, but a
 config outside it survives a fresh clone.)
@@ -282,8 +285,8 @@ with `llb mmff-test conformer.NAME.fixed.mol2`. `--mmff on` / `off` give
 db2_converter's plain MMFF / none. `--method`, `--pbfilter`, `--nconf`, `--mmff`, `--ncpus`,
 `--nshards`, `--mem-per-cpu` and `--time` override the defaults. For one molecule
 by hand, `llb build-ligand` runs the same launcher (and accepts a relative `-i`). Each array task runs `NCPUS` builds on
-node-local scratch, rsyncs back every 15 minutes, and refuses to start if
-singularity, build_ligand, RDKit or AMSOL's libraries are missing.
+node-local scratch, rsyncs back every 15 minutes, and refuses to start unless
+`llb doctor --stage db2` passes on its node (`submit-db2` runs it first, too).
 
 A run directory belongs to one library. Resubmitting resumes without re-splitting.
 Pointing it at a different library is refused. `verify-db2` reads every shard's

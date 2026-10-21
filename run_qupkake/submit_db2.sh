@@ -114,27 +114,10 @@ NCPUS=$NCPUS
 NSHARDS=$NSHARDS
 EOF
 
-# ---- preflight on this node: the same checks every task makes ----------------
-# Every check exits explicitly: `set -e` is suspended inside a subshell on the
-# left of `||`, so a failing command would otherwise fall through to sbatch.
+# ---- preflight: llb doctor checks what every task needs, before anything is queued
 echo "== preflight (config: $LLB_CONFIG)"
-( llb_activate DB2C || exit 2
-  bl="$(llb_require_exe BUILD_LIGAND_EXE build_ligand)" || exit 2
-  echo "  build_ligand  $bl"
-  python -c 'import rdkit, db2_converter' \
-      || { echo "FATAL: rdkit or db2_converter not importable in ${DB2C_ENV}" >&2; exit 2; }
-  if [[ "$PBFILTER" == on ]]; then
-      python -c 'import posebusters' 2>/dev/null \
-          || { echo "FATAL: --pbfilter on, but posebusters is not importable in ${DB2C_ENV}" >&2; exit 2; }
-  fi
-  if [[ "$METHOD" == *bcl* ]]; then
-      python "$LLB_ROOT/run_qupkake/check_bcl.py" \
-          || { echo "FATAL: method $METHOD needs BCL, and db2_converter cannot find it (see above)" >&2; exit 2; }
-  fi
-  echo "  method        $METHOD  (pbfilter $PBFILTER)"
-  command -v singularity >/dev/null \
-      || echo "  WARNING: singularity not on PATH here; conformator/UNICON need it on the nodes"
-) || exit 2
+"$LLB_ROOT/bin/llb" doctor --stage db2 --method "$METHOD" --pbfilter "$PBFILTER" \
+    || { echo "FATAL: llb doctor failed (see above); nothing submitted" >&2; exit 2; }
 
 ntasks=$(( (NSHARDS + NCPUS - 1) / NCPUS ))
 cd "$RUN"

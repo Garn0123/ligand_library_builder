@@ -5,7 +5,7 @@ commands, and every problem shows up in minutes, not after a 1–2 h smoke test.
 Third-party tools may still need installing, but LLB's own glue must be simple.
 
 Status: design agreed with John on 2026-10-20, in an interview; the decisions are
-numbered Q1–Q29 below. Nothing here is implemented yet.
+numbered Q1–Q29 below. Phase 1 (`llb doctor` + the `preflight` stage) is implemented; phases 2–4 are not.
 
 ## Why
 
@@ -136,7 +136,7 @@ $LLB_CONTAINER exec --bind <auto> $LLB_IMAGE micromamba run -n <env> cmd
   tool at a native env to test a new QupKake.
 - **Nothing touches the image on a login node.** ACES has no container runtime
   there. `pipeline start` only checks `hpc.env` and submits. A new first stage,
-  **`preflight`** (a ~5 min job on `LLB_PARTITION`), runs `doctor` and
+  **`preflight`** (inline in the first control job, so on a node of `LLB_PARTITION`), runs `doctor` and
   `versions.py` and gates everything after it. `submit-db2` and
   `submit-qupkake` drop their login-node activation, and every array task still
   checks itself.

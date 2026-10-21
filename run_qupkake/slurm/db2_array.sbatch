@@ -9,10 +9,10 @@
 # NCONF, MMFF, NCPUS, NSHARDS) live in RUNDIR/config.env; where the software
 # lives (DB2C_SETUP, DB2C_ENV, BUILD_LIGAND_EXE) lives in config/hpc.env.
 #
-# Adapted from John's db2_array.sbatch (2026-08-27): same preflight, provenance,
-# scratch + checkpointing and resume logic; the hard-coded environment lines
-# (~/env/bcl.sh, the miniforge mamba.sh, `mamba activate db2_converter`) now
-# come from config/hpc.env via common/env.sh.
+# Adapted from John's db2_array.sbatch (2026-08-27): same provenance, scratch +
+# checkpointing and resume logic; its preflight is now `llb doctor --stage db2`,
+# and the hard-coded environment lines (~/env/bcl.sh, the miniforge mamba.sh,
+# `mamba activate db2_converter`) come from config/hpc.env via common/env.sh.
 
 set -uo pipefail
 
@@ -20,59 +20,28 @@ RUN="${RUNDIR:?RUNDIR not set}"
 # shellcheck disable=SC1091
 source "$RUN/config.env"
 
-# --- environment -------------------------------------------------------
-# DB2C_SETUP runs BEFORE activation: bcl.sh runs `module purge`, and a purge
-# after activation resets PATH/LD_LIBRARY_PATH out from under the conda env. It
-# also loads gcc/8.2.0 (libgfortran.so.5 for AMSOL) and singularity (the
-# conformator/UNICON wrappers).
+# --- preflight ---------------------------------------------------------
+# Fail the task at once rather than burning the wall clock producing nothing:
+# a silently-missing module is the costliest failure at this parallelism.
+# llb doctor owns the checks (build_ligand, imports, BCL, posebusters, AMSOL's
+# libraries, singularity) and activates DB2C in its own subprocess.
 # shellcheck disable=SC1091
 source "${LLB_ROOT:?config.env has no LLB_ROOT}/common/env.sh" \
     || { echo "cannot source $LLB_ROOT/common/env.sh"; exit 78; }
 llb_load_config || exit 78
-llb_activate DB2C || exit 78
-BUILD_LIGAND="$(llb_require_exe BUILD_LIGAND_EXE build_ligand)" || exit 78
-export OMP_NUM_THREADS=1                      # one thread per build, not per node
-
-# --- preflight ---------------------------------------------------------
-# Fail the task immediately rather than burning the wall clock producing
-# nothing. A silently-missing module is the single most expensive failure
-# mode at this level of parallelism.
-preflight_fail=0
-check() {
-    if ! eval "$2" >/dev/null 2>&1; then
-        echo "PREFLIGHT FAIL: $1"
-        preflight_fail=1
-    fi
-}
-check "singularity not on PATH (module purge without reload?)" "command -v singularity"
-check "build_ligand not executable ($BUILD_LIGAND)"             "[[ -x '$BUILD_LIGAND' ]]"
-check "python cannot import rdkit"                             "python -c 'import rdkit'"
-check "build launcher does not import" \
-    "python -c 'import sys; sys.path.insert(0, \"$LLB_ROOT/run_qupkake\"); import build_ligand_relaxed'"
 # Runs from before 2026-10-20 have no PBFILTER in config.env: off, as they ran.
 PBFILTER="${PBFILTER:-off}"
-[[ "$PBFILTER" == on ]] && check "posebusters not importable (--PBfilter)" "python -c 'import posebusters'"
-[[ "$METHOD" == *bcl* ]] && check "db2_converter cannot find BCL (method $METHOD)" \
-    "python '$LLB_ROOT/run_qupkake/check_bcl.py'"
-
-AMSOL=$(python -c "from db2_converter.config import config; print(config['all']['AMSOLEXE'])" 2>/dev/null)
-if [[ -n "$AMSOL" ]]; then
-    missing=$(ldd "$AMSOL" 2>/dev/null | grep 'not found' || true)
-    if [[ -n "$missing" ]]; then
-        echo "PREFLIGHT FAIL: AMSOL has unresolved libraries:"
-        echo "$missing"
-        preflight_fail=1
-    fi
-else
-    echo "PREFLIGHT FAIL: could not resolve AMSOLEXE from db2_converter.config"
-    preflight_fail=1
-fi
-
-if (( preflight_fail )); then
+if ! "$LLB_ROOT/bin/llb" doctor --stage db2 --method "$METHOD" --pbfilter "$PBFILTER"; then
     echo "aborting task $SLURM_ARRAY_TASK_ID on $(hostname) -- environment is broken"
     exit 78
 fi
-echo "preflight OK"
+
+# --- environment -------------------------------------------------------
+# DB2C_SETUP runs BEFORE activation: bcl.sh runs `module purge`, and a purge
+# after activation resets PATH/LD_LIBRARY_PATH out from under the conda env.
+llb_activate DB2C || exit 78
+BUILD_LIGAND="$(llb_require_exe BUILD_LIGAND_EXE build_ligand)" || exit 78
+export OMP_NUM_THREADS=1                      # one thread per build, not per node
 
 # MMFF: off = none; on = db2_converter's own (plain MMFF94, folds charged
 # molecules); restrained = run_qupkake/build_ligand_relaxed.py, which swaps in
@@ -149,6 +118,7 @@ if [[ ! -f "$prov" ]]; then
         python -c "from db2_converter.config import config; import json; print(json.dumps(config, indent=2, default=str))" 2>&1
         echo
         echo "=== binaries ==="
+        AMSOL=$(python -c "from db2_converter.config import config; print(config['all']['AMSOLEXE'])" 2>/dev/null)
         for exe in "$AMSOL" "$BUILD_LIGAND" "$(command -v conformator)" "$(command -v unicon)" \
                    "$(command -v antechamber)" "$(command -v obabel)" \
                    "$(command -v singularity)"; do

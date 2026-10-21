@@ -27,8 +27,13 @@ mkdir -p ~/.config/llb
 cp /nfs/turbo/.../opt/ligand_library_builder/config/hpc.env.example ~/.config/llb/hpc.env  # edit it
 export PATH=/nfs/turbo/.../opt/ligand_library_builder/bin:$PATH   # ~/.bashrc
 export LLB_CONFIG=~/.config/llb/hpc.env                            # ~/.bashrc
+llb doctor                                     # checks every tool and license, in seconds
+llb doctor --node                              # the same, on a compute node of LLB_PARTITION
 llb help                                       # then: cd to a run directory and go
 ```
+
+`llb pipeline start` runs `llb doctor` as its first stage, so a broken tool
+stops the run before any work is queued.
 
 Environments are separate on purpose: QupKake pins `xtb 6.4.1` and its own
 torch stack, and db2_converter needs its own module set. `hpc.env` names one env
