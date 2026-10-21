@@ -12,6 +12,9 @@
 # and check the port against the original code once:
 #   llb env PKA python $(llb root)/pka_triage/molgpka.py --check some.smi
 #
+# The toolchain image installs it from llb_pka.linux-64.lock instead; after
+# editing this file, regenerate that lockfile (environments/README.md).
+#
 # Pins:
 #   rdkit 2024.03.5  same as the db2_converter env, so SMILES canonicalize and
 #                    stereo enumerates identically on both sides of the build

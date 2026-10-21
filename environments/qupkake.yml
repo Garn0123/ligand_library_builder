@@ -1,0 +1,51 @@
+# qupkake -- environment for the QupKake stage (run_qupkake/qupkake_protomers.py),
+# CPU only. Derived from QupKake's own environment.yaml (Shualdon/QupKake),
+# with every loose spec there pinned, and QupKake itself installed from the same
+# commit LLB was validated with.
+#
+# The toolchain image installs it from qupkake.linux-64.lock (environments/README.md).
+# Natively:
+#   micromamba create -p $PREFIX -f environments/qupkake.linux-64.lock
+#
+# xtb is NOT in here: QupKake's README says the conda build of xtb 6.4.1 is buggy,
+# so xtb is built from source (container/llb.def, /opt/xtb) and found through
+# $XTBPATH. QupKake runs `conda list xtb` at import; in the image a `conda` stub
+# answers it (container/llb.def), and since no xtb shows up, QupKake falls
+# through to $XTBPATH.
+#
+# Pins:
+#   channels         conda-forge only (upstream mixes pytorch + conda-forge +
+#                    defaults). The pytorch channel is frozen and `defaults` has
+#                    licence terms; conda-forge carries every package below.
+#   python 3.9       as upstream
+#   pytorch 2.1.*=cpu*  upstream pins pytorch::pytorch==2.1; the build string
+#                    pins the CPU build even when solved on a GPU node
+#   torchvision      NOT from conda. QupKake declares it but never imports it, and
+#                    conda-lock's pip solve reads PyPI metadata for the conda
+#                    build too (0.16.1 there wants torch==2.1.1, conda-forge has
+#                    2.1.0/2.1.2 only), so a conda torchvision ends up installed
+#                    twice. pip's 0.16.2 (wants torch==2.1.2) is the only copy.
+#   pytorch-lightning 2.1.0  as upstream
+#   rdkit 2022.03.3  as upstream (2022.03.03), the RDKit QupKake was released and
+#                    validated with; deliberately NOT the 2024.03.5 the other
+#                    two envs share
+#   numpy/pandas/scipy  floors are QupKake's pyproject dependencies (so pip
+#                    does not replace the conda builds); numpy<2 for rdkit 2022.03
+#   torch_geometric 2.4.0  as upstream, from pip (no torch_scatter/torch_sparse)
+#   qupkake f7a294e  the commit LLB validated (run_qupkake/README.md)
+name: qupkake
+channels:
+  - conda-forge
+dependencies:
+  - python=3.9
+  - pytorch=2.1.*=cpu*
+  - torchmetrics
+  - pytorch-lightning=2.1.0
+  - rdkit=2022.03.3
+  - numpy>=1.25,<2
+  - pandas>=2.1
+  - scipy>=1.11
+  - pip
+  - pip:
+      - torch_geometric==2.4.0
+      - qupkake @ git+https://github.com/Shualdon/QupKake@f7a294e
