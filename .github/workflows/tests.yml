@@ -10,12 +10,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: mamba-org/setup-micromamba@v2
         with:
-          environment-file: environments/llb_pka.yml
+          environment-file: environments/llb.yml
           cache-environment: true
-      - name: MolGpKa checkout (weights + SMARTS, pinned)
-        run: |
-          git clone -q https://github.com/Xundrug/MolGpKa "$RUNNER_TEMP/MolGpKa"
-          git -C "$RUNNER_TEMP/MolGpKa" checkout -q 4dc8352
-          echo "MOLGPKA_DIR=$RUNNER_TEMP/MolGpKa" >> "$GITHUB_ENV"
-      - name: pytest
+      - name: pytest (docking/, common/env.sh)
+        run: python -m pytest
+      - name: pytest (mol_compiler/)
+        working-directory: mol_compiler
         run: python -m pytest

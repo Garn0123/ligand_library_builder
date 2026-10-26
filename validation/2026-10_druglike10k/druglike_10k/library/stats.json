@@ -1,0 +1,46 @@
+{
+  "shards_read": 1000,
+  "shards_missing": [],
+  "parents_named": 9997,
+  "parents_hashed": 0,
+  "names": 22613,
+  "protomers": 17302,
+  "stereo_closure_added": 5499,
+  "n_h_invertomers": 1828,
+  "dropped": {
+    "too_many_stereoisomers": 4
+  },
+  "net_charge": {
+    "-3": 2,
+    "-2": 108,
+    "-1": 1304,
+    "0": 11039,
+    "1": 6692,
+    "2": 2989,
+    "3": 450,
+    "4": 29
+  },
+  "attrition_by_heavy_atoms": {
+    "18": {
+      "parents": 529,
+      "named": 528
+    },
+    "19": {
+      "parents": 865,
+      "named": 865
+    },
+    "20": {
+      "parents": 1576,
+      "named": 1575
+    },
+    "21": {
+      "parents": 2455,
+      "named": 2455
+    },
+    "22": {
+      "parents": 4575,
+      "named": 4574
+    }
+  },
+  "library_smi_sha256": "4fc5e4920d3ca86178a2fd0539f89bf498a79b2309773361f8fb4a99d25c088e"
+}

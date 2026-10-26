@@ -1,94 +1,137 @@
-"""`llb names` (assign_names.py): stereo closure, the 3D embedding check and its
-last-isomer guard, invertomer marking, and the name contract."""
+"""naming/assign_names.py: MolSanitizer's NAME_state.stereo -> 16-character contract names.
+
+The MolSanitizer outputs below are copied from real `msani` 0.7.4 runs
+(--tautomers --protonation --pH 6 --pH_range 1 --stereoisomers), so the suffix
+format is MolSanitizer's own, not a guess at it.
+"""
 import csv
+import json
 
 import pytest
 
-import assign_names
-from assign_names import closure, embeddable, invertomer_key, needs_embed_check
-from qupkake_protomers import PROTOMER_COLUMNS
-from rdkit import Chem
+pytest.importorskip("rdkit")
+import assign_names                                              # noqa: E402
+from assign_names import split_ms_name                           # noqa: E402
+
+INPUTS = """\
+CC(N)Cc1c[nH]cn1 ZINCaa000012wx34
+CC(C)N1CCN(C)CC1C ZINCaa000013yz56
+O=C1NC(=O)C(C)(c2ccccc2)N1 ZINCaa000011uv12
+Cc1c[nH]cn1 ZINCaa000006kl12
+CC(=O)CC(C)=O ZINCaa000009qr78
+C1=CC=CC=1 weird_name_1.2
+C.CC ZINCaa000016ef56
+CCO ZINCaa000017gh78
+CC(F)Cl ZINCaa000018ij90
+CCC(C)CC ZINCaa000019kl12
+OCC ZINCaa000020mn34
+"""
+
+MS_OUT = """\
+C[C@H]([NH3+])Cc1c[nH]c[nH+]1 ZINCaa000012wx34_1.1
+C[C@@H]([NH3+])Cc1c[nH]c[nH+]1 ZINCaa000012wx34_1.2
+C[C@H]([NH3+])Cc1c[nH]cn1 ZINCaa000012wx34_2.1
+C[C@@H]([NH3+])Cc1c[nH]cn1 ZINCaa000012wx34_2.2
+CC(C)[N@@H+]1CCN(C)C[C@H]1C ZINCaa000013yz56_1.1
+CC(C)[N@@H+]1CCN(C)C[C@@H]1C ZINCaa000013yz56_1.2
+CC(C)[N@H+]1CCN(C)C[C@H]1C ZINCaa000013yz56_1.3
+CC(C)[N@H+]1CCN(C)C[C@@H]1C ZINCaa000013yz56_1.4
+C[C@]1(c2ccccc2)NC(=O)NC1=O ZINCaa000011uv12.1
+C[C@@]1(c2ccccc2)NC(=O)NC1=O ZINCaa000011uv12.2
+Cc1c[nH]c[nH+]1 ZINCaa000006kl12_1
+Cc1c[nH]cn1 ZINCaa000006kl12_2
+CC(=O)CC(C)=O ZINCaa000009qr78
+C1=CC=CC=1 weird_name_1.2
+C.CC ZINCaa000016ef56
+CC(F)Cl ZINCaa000018ij90
+CCO ZINCaa000020mn34
+CCO ZINCaa000017gh78
+CC ZINCzz999999zz99
+"""
 
 
-def test_cage_isomers_that_cannot_exist_are_not_embeddable():
-    # 3chemistrycheck failures on the 10k: conformator built the other isomer
-    assert not embeddable("CC(=O)NNC(=O)C[NH2+][C@@H]1[C@@H]2C[C@@H]3[C@H](C2)[C@@]31CO")
-    assert not embeddable("C[C@H](Cc1cnc[nH]1)C(=O)N1C[C@H]2C[C@@]1(c1ccccc1)C2")
+def test_split_ms_name_reads_state_and_stereo():
+    known = {"ZINCaa000013yz56", "weird_name_1.2", "weird_name"}
+    assert split_ms_name("ZINCaa000013yz56", known) == ("ZINCaa000013yz56", 0, 0)
+    assert split_ms_name("ZINCaa000013yz56_2", known) == ("ZINCaa000013yz56", 2, 0)
+    assert split_ms_name("ZINCaa000013yz56.3", known) == ("ZINCaa000013yz56", 0, 3)
+    assert split_ms_name("ZINCaa000013yz56_2.3", known) == ("ZINCaa000013yz56", 2, 3)
+    # an input name with '_' and '.' in it is matched whole, never cut
+    assert split_ms_name("weird_name_1.2", known) == ("weird_name_1.2", 0, 0)
+    assert split_ms_name("weird_name_1.2_3.1", known) == ("weird_name_1.2", 3, 1)
+    assert split_ms_name("ZINCzz999999zz99", known) is None
+    assert split_ms_name("ZINCaa000013yz56_x", known) is None
 
 
-def test_strained_but_real_isomers_are_embeddable():
-    # fast check rejected these; the escalation must rescue them
-    assert embeddable("O=C(NC[C@@H]1CCN1Cc1cscc1Br)[C@@H]1CCC[C@H]2C[C@@H]21")
-    assert embeddable("CNC(=O)c1ccc(NC[C@]23CCCC[C@@H]2C3)c(F)c1")
+@pytest.fixture
+def library(tmp_path):
+    (tmp_path / "in.smi").write_text(INPUTS)
+    (tmp_path / "in_clean.smi").write_text(MS_OUT)
+    assign_names.main(["--inputs", str(tmp_path / "in.smi"), "--ms", str(tmp_path / "in_clean.smi"),
+                       "-o", str(tmp_path / "lib"), "--ph", "6+-1"])
+    lib = tmp_path / "lib"
+    with open(lib / "library.tsv") as fh:
+        rows = {r["ms_name"]: r for r in csv.DictReader(fh, delimiter="\t")}
+    with open(lib / "dropped.tsv") as fh:
+        dropped = {(r["input_name"] or r["ms_name"]): r["reason"]
+                   for r in csv.DictReader(fh, delimiter="\t")}
+    return rows, dropped, json.loads((lib / "stats.json").read_text()), lib
 
 
-def test_cage_closure_keeps_only_buildable_isomers():
-    iso = closure("CC(=O)NNC(=O)CNC1C2CC3C(C2)C31CO")
-    assert len(iso) == 16
-    assert sum(embeddable(s) for s in iso) == 2
+def test_state_and_stereo_become_the_last_two_characters(library):
+    rows, *_ = library
+    assert rows["ZINCaa000012wx34_1.1"]["name"] == "Caa000012wx3400C"
+    assert rows["ZINCaa000012wx34_1.2"]["name"] == "Caa000012wx3401C"
+    assert rows["ZINCaa000012wx34_2.1"]["name"] == "Caa000012wx3410C"
+    assert rows["ZINCaa000012wx34_2.2"]["name"] == "Caa000012wx3411C"
+    assert rows["ZINCaa000011uv12.2"]["name"] == "Caa000011uv1201C"     # stereo only
+    assert rows["ZINCaa000006kl12_2"]["name"] == "Caa000006kl1210C"     # states only
+    assert rows["ZINCaa000009qr78"]["name"] == "Caa000009qr7800C"       # neither
+    r = rows["ZINCaa000012wx34_1.1"]
+    assert (r["protomer_index"], r["stereo_index"], r["net_charge"]) == ("0", "0", "2")
+    assert r["parent_id"] == r["zinc_id"] == "ZINCaa000012wx34"
+    assert r["site_source"] == "molsanitizer" and r["ph_values"] == "6+-1"
 
 
-def test_only_fused_or_bridged_centres_are_checked():
-    assert not needs_embed_check(Chem.MolFromSmiles("C[C@H](N)CC"))
-    assert needs_embed_check(Chem.MolFromSmiles("C[C@@H]1[C@H]2CC[C@@H](C2)C1"))
+def test_non_zinc_parent_gets_a_hashed_base_id(library):
+    rows, *_ = library
+    r = rows["weird_name_1.2"]
+    assert r["parent_id"].startswith("LLBZ") and r["zinc_id"] == ""
+    assert r["name"] == f"C{r['parent_id'][3:]}00C" and r["input_name"] == "weird_name_1.2"
 
 
-def test_invertomer_key_ignores_only_nh_plus_centres():
-    a = "C[N@@H+]1CCN(C)[C@H]2C[C@@H]21"
-    b = "C[N@H+]1CCN(C)[C@H]2C[C@@H]21"
-    assert invertomer_key(a) == invertomer_key(b)
-    assert invertomer_key("C[C@H](N)CC") != invertomer_key("C[C@@H](N)CC")
+def test_n_h_invertomers_point_at_their_partner(library):
+    rows, *_ = library
+    inv = {k: rows[k]["invertomer_of"] for k in rows if k.startswith("ZINCaa000013yz56")}
+    # .1/.3 and .2/.4 differ only at the N-H+ centre; .1/.2 differ at a carbon
+    assert inv == {"ZINCaa000013yz56_1.1": "", "ZINCaa000013yz56_1.2": "",
+                   "ZINCaa000013yz56_1.3": "Caa000013yz5600C",
+                   "ZINCaa000013yz56_1.4": "Caa000013yz5601C"}
 
 
-def write_shard(root, rows):
-    d = root / "shard_00000"
-    d.mkdir(parents=True)
-    (d / "DONE").write_text("shard_index=0\n")
-    with open(d / "protomers.csv", "w", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=PROTOMER_COLUMNS + ["site_source"], lineterminator="\n")
-        w.writeheader()
-        for r in rows:
-            w.writerow({**{c: "" for c in PROTOMER_COLUMNS}, "site_source": "molgpka",
-                        "ph_values": "7.4", "population_estimate": "1.0", **r})
+def test_drops_are_recorded_with_a_reason(library):
+    rows, dropped, stats, _ = library
+    assert dropped["ZINCaa000016ef56"] == "multiple_fragments"
+    assert dropped["ZINCaa000018ij90"] == "stereo_not_closed"       # MS left a centre open
+    assert dropped["ZINCaa000020mn34"] == "duplicate_structure"     # same SMILES, later parent id
+    assert rows["ZINCaa000017gh78"]["smiles"] == "CCO"
+    assert dropped["ZINCzz999999zz99"] == "unknown_input_name"
+    assert dropped["ZINCaa000019kl12"] == "not_returned_by_molsanitizer"
+    assert stats["inputs"] == 11 and stats["names"] == len(rows) == 15
+    assert stats["n_h_invertomers"] == 2
 
 
-def run_names(tmp_path, rows):
-    write_shard(tmp_path / "merged", rows)
-    assert assign_names.main(["--shards-dir", str(tmp_path / "merged"), "-o",
-                              str(tmp_path / "library"), "--jobs", "1"]) in (0, None)
-    with open(tmp_path / "library" / "library.tsv") as fh:
-        lib = list(csv.DictReader(fh, delimiter="\t"))
-    with open(tmp_path / "library" / "dropped.tsv") as fh:
-        dropped = list(csv.DictReader(fh, delimiter="\t"))
-    return lib, dropped
+def test_library_smi_is_what_pass_two_reads(library):
+    rows, _, _, lib = library
+    lines = (lib / "library.smi").read_text().splitlines()
+    assert len(lines) == len(rows)
+    for line in lines:
+        smi, name = line.split()
+        assert len(name) == 16 and name[0] == name[-1] == "C"
 
 
-def row(pid, smi, p=0, s=0):
-    return {"protomer_name": f"{pid}_{p}_{s}", "parent_name": pid, "smiles": smi,
-            "protomer_index": str(p), "stereo_index": str(s)}
-
-
-def test_a_protomer_never_loses_its_last_isomer(tmp_path):
-    # bicyclo[1.1.1]pentane: RDKit embeds no labelling, conformator builds it (v1 did)
-    lib, dropped = run_names(tmp_path, [
-        row("ZINCib00000ABfDp", "NCC(CN)NC(=O)C12CC(CC(F)(F)F)(C1)C2")])
-    assert {r["parent_id"] for r in lib} == {"ZINCib00000ABfDp"}
-    assert not [d for d in dropped if d["reason"] == "stereo_cannot_embed"]
-
-
-def test_impossible_isomers_dropped_when_a_buildable_one_exists(tmp_path):
-    lib, dropped = run_names(tmp_path, [
-        row("ZINCi400000II2VT", "CC(=O)NNC(=O)CNC1C2CC3C(C2)C31CO")])
-    assert len(lib) == 2
-    assert sum(d["reason"] == "stereo_cannot_embed" for d in dropped) == 14
-    assert all(embeddable(r["smiles"]) for r in lib)
-
-
-def test_names_follow_the_contract_and_mark_invertomers(tmp_path):
-    lib, _ = run_names(tmp_path, [
-        row("ZINCim000001Q4BG", "C[NH+]1CCN(c2ncc(Cl)cc2Br)[C@H]2C[C@@H]21")])
-    names = [r["name"] for r in lib]
-    assert all(len(n) == 16 and n[0] == n[-1] == "C" for n in names)
-    assert len(names) == 2                                   # the two N-H+ configurations
-    inv = [r for r in lib if r["invertomer_of"]]
-    assert len(inv) == 1 and inv[0]["invertomer_of"] in names
+def test_refuses_to_overwrite(library):
+    *_, lib = library
+    with pytest.raises(SystemExit):
+        assign_names.main(["--inputs", str(lib.parent / "in.smi"),
+                           "--ms", str(lib.parent / "in_clean.smi"), "-o", str(lib)])

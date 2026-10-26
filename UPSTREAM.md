@@ -1,44 +1,45 @@
-# ZINC SMILES → protomers → contract names → db2
+# ZINC SMILES → samples → (MolSanitizer) → docking jobs
 
-The path from ZINC SMILES to chunked db2, in the order it runs. Each step writes a
+The path from ZINC22 to docking jobs, in the order it runs. Each step writes a
 file the next one checks, so a failure stops at the step that caused it rather
 than surfacing as a wrong row in the matrix.
 
 ```
-llb fetch + llb sample     ZINC22 2D on disk, uniform N/bin          samples/H*.smi
-llb parents                validate ids, neutralize, dedupe          parents/shards/*.smi
-llb submit-qupkake         QupKake + protomers, one task/shard       protomers/shard_*/
-llb names                  union -> stereo closure -> names          library/library.smi
-llb validate-names         the naming contract (DRAP's checker)      gate
-llb check-stereo           db2_converter will not rename             gate (db2_converter env)
-llb submit-db2             conformers -> db2 (build_ligand array)    db2_run/out/
-llb verify-db2             names + charges survived into db2         gate
+llb fetch + llb sample     ZINC22 2D on disk, N per heavy-atom bin   samples/H*.smi
+MolSanitizer pass 1        tautomers, protonation, stereo (SMILES)   *_clean.smi
+llb names                  contract names                            library/library.smi, .tsv
+MolSanitizer pass 2        3D -> db2, names kept                     db2/<name>.db2
 llb chunk                  db2 -> balanced chunks + manifest         docking input
+llb mol2 / mol2-library    mol2 read back out of the db2 (optional)  mol2 docking input
+  ... docking (rna_pipeline pipeline/library_docking/) ...
+llb collapse-invertomers   best score per N-H+ invertomer group      score table
 ```
 
-(On branch `feat/pka-triage`, `llb triage` + `llb merge` sit around the QupKake
-step and send it only the molecules MolGpKa can't settle; see
-`pka_triage/TRIAGE.md`.)
+Choosing protonation states, tautomers and stereoisomers, and building
+conformers and db2s, is MolSanitizer's job. Naming stays here. LLB's own construction stages (MolGpKa triage, QupKake,
+contract names, db2_converter, `llb pipeline`) are at tag `llb-full-2026-10`;
+[DECISIONS.md](DECISIONS.md) records why each choice was made for `lib_h18_22`.
 
 ## 0. Point the repo at your software (once per machine)
 
 ```bash
-mkdir -p ~/.config/llb && cp <checkout>/config/hpc.env.example ~/.config/llb/hpc.env   # edit it
-export LLB_CONFIG=~/.config/llb/hpc.env                                      # ~/.bashrc
+# the site layout: one directory per cluster, the checkout inside it
+cp $LLB_SITE/ligand_library_builder/config/hpc.env.example $LLB_SITE/hpc.env   # edit it
+$EDITOR $LLB_SITE/users/$USER.env      # per-user: optional LLB_ACCOUNT, ZINC_DATA
 ```
 
-(`config/hpc.env` inside the checkout also works and is gitignored, but a
-config outside it survives a fresh clone.)
+`llb` looks for its config in this order: `LLB_CONFIG` if set, then
+`../hpc.env` beside the checkout (`$LLB_SITE/hpc.env`), then `config/hpc.env`
+inside the checkout (gitignored). Then it reads `users/$USER.env` from the same
+directory, whose keys win, so the cluster settings are shared and only the
+per-user ones are yours.
 
-Every step reads tool locations from that file: conda env name or
-prefix, an optional executable path, and an optional setup hook run *before*
-activation (`module purge`, `module load ...`, `source ~/env/bcl.sh`). No
-script hard-codes a path. `llb env TOOL CMD` runs any command in a tool's
-environment (TOOL = PREP, QUPKAKE, PKA, DB2C or DOCK), e.g.
-`llb env DB2C which build_ligand`. `DRAP_DIR` points `llb validate-names` at
-the DRAP checkout.
-
-All commands below run from a run directory, with `llb` on `PATH` (next).
+Every step reads tool locations from that file: conda env name or prefix, an
+optional executable path, and an optional setup hook run *before* activation
+(`module purge`, `module load ...`). No script hard-codes a path. There are two
+tools: `PREP` (Python with RDKit and pandas, `environments/llb.yml`) and `DOCK`
+(`db2tool`). `llb env TOOL CMD` runs any command in a tool's environment, e.g.
+`llb env DOCK which db2tool`.
 
 ### Code in one place, runs anywhere
 
@@ -47,27 +48,24 @@ in the right environment, against your **current** directory:
 
 ```bash
 export PATH=/nfs/turbo/umms-maom/johnbick/opt/ligand_library_builder/bin:$PATH   # ~/.bashrc
-export LLB_CONFIG=~/.config/llb/hpc.env      # optional: config outside the checkout too
 mkdir -p /scratch/.../ladder_h14_h28 && cd /scratch/.../ladder_h14_h28
-llb help                                      # every step, in pipeline order
+llb help                                      # every step, in order
 ```
 
 Every output path is relative to where you run it, and SLURM logs go to
 `./logs`, so one run directory holds one run and the checkout stays read-only.
-`llb root` prints which checkout you're using. Each db2 build records its
-commit, uncommitted changes and config in `provenance.<jobid>.txt`.
+`llb root` prints which checkout you're using.
 
 | step | `llb` | script |
 | --- | --- | --- |
 | URL list | `llb print-urls` / `llb extract-urls` | `mol_download/sample_2d.py` / `extract_urls.sh` |
 | download | `llb fetch`, `llb fetch-verify`, `llb fetch-status` | `mol_download/run.sh`, `verify.sh`, `status.sh` |
 | sample | `llb sample` | `mol_download/sample_2d.py` |
-| parents | `llb parents` | `run_qupkake/prepare_parents.py` |
-| QupKake | `llb qupkake`, `llb submit-qupkake` | `qupkake_protomers.py`, `submit_qupkake.sh` |
-| names | `llb names`, `llb validate-names`, `llb check-stereo` | `assign_names.py`, DRAP's `stage4/validate_names.py`, `check_db2_stereo.py` |
-| db2 build | `llb submit-db2`, `llb verify-db2` | `submit_db2.sh` + `slurm/db2_array.sbatch`, `verify_db2_build.py` |
-| mol2 | `llb mol2` | `db2_to_mol2.py` |
+| names | `llb names` | `naming/assign_names.py` |
+| ZINC 3D db2s | `llb zinc3d-*` | `mol_download/zinc3d/` (its `RUNBOOK.md`) |
 | chunk | `llb chunk` | `mol_compiler/parallel/submit_chunks.sh` → `submit.slurm` |
+| mol2 | `llb mol2`, `llb mol2-library` | `docking/db2_to_mol2.py`, `docking/mol2_library.py` |
+| after docking | `llb collapse-invertomers` | `docking/collapse_invertomers.py` |
 
 The scripts are listed for reading; run them through `llb`, which picks the
 environment and keeps outputs out of the checkout.
@@ -111,271 +109,107 @@ equally likely, the logP mix right by construction, about 30 min for H28. With
 **Pilot only:** without `--local`, the sampler streams a few MB per bin. Use it to
 prove the plumbing end to end, never for results.
 
-## 2. Parents
+
+## 2. Build the ligands: MolSanitizer, named in between
+
+`samples/H*.smi` (one `SMILES ZINC_ID` per line, one file per heavy-atom bin)
+is MolSanitizer's input. How to run it on Great Lakes is in `molsanitizer/`.
+It runs in **two passes with `llb names` between them**, because a db2 keeps
+only the last 16 characters of a name and a ZINC22 id is already 16: run in
+one pass, `ZINCaa000013yz56_2.3` would lose its prefix inside the db2.
 
 ```bash
-llb parents samples/H*.smi -o parents --shard-size 50
+# pass 1: chemistry only, SMILES out (one *_clean.smi per input file)
+msani -i samples/H*.smi --removesalts --tautomers --protonation --pH 7 --pH_range 1 --stereoisomers
+# names: NAME_state.stereo -> C<base id><state><stereo>C
+llb names --inputs samples/H*.smi --ms H*_clean.smi -o library --ph '7+-1'
+# pass 2: 3D and db2 only; no re-neutralizing, no re-enumerating stereo
+msani -i library/library.smi --no-neutralize --no-stereoisomers --gen3d -f db2
 ```
 
-Neutralizes with the same `standardize` QupKake's wrapper uses, and dedupes by
-name and by neutral structure. Also writes `preflight.smi`: 20 parents, largest
-bins first.
+(Use the pH settings `molsanitizer/` settles on. The CLI takes integer pH
+only; 7.4 needs the Python API.)
 
-**Your own SMILES, no sampling:** skip step 1 and pass the files straight in,
-plain or gzipped, any names:
+MolSanitizer names pass 1's output `INPUT_state.stereo`: `_N` numbers its
+tautomer x protonation states, `.N` the stereoisomers of a state, each left out
+when there is only one. `llb names` renumbers each from 0 into one base62
+character, so the last two characters of a contract name are **state** and
+**stereo**. The state character now covers tautomers as well as protomers
+(`library.tsv` keeps the column name `protomer_index`). It also:
+
+- checks every SMILES is stereo-closed (re-enumerating gives one isomer), so
+  pass 2's `--no-stereoisomers` builds exactly the named structure;
+- keeps one name per structure across the library and drops multi-fragment
+  rows;
+- sets `invertomer_of` for N-H+ invertomers, which MolSanitizer enumerates as
+  stereoisomers;
+- writes `library.smi`, `library.tsv` (LLB's old columns plus `ms_name`),
+  `dropped.tsv` (every lost input or row, with a reason) and `stats.json`.
+
+Checked on a laptop with MolSanitizer 0.7.4 (2026-10-26): pass 2 on
+`library.smi` writes `db2/<name>.db2` with the contract name intact on the
+`M` line and one db2 per name.
+
+## 3. Docking jobs
+
+### Chunking (mol_compiler)
 
 ```bash
-llb parents my_ligands.smi.gz -o parents
-```
-
-Names are handled automatically by their shape (`run_qupkake/llb_ids.py`):
-
-| Input name | Becomes |
-| --- | --- |
-| `ZINC` + 12 (`ZINCh10000007sNS`) | kept; base ID = its last 12 characters |
-| `ZINC12345` (old, unpadded) | padded to `ZINC000000012345`, then as above |
-| `ZINC…` in any other shape (`ZINC000012345678.0`) | **rejected** `malformed_zinc_id`: a damaged ID, not a new molecule |
-| anything else (`CHEMBL25`, `my(ligand)/2`) | base ID `Z` + 11 characters of its sha256; travels as `LLB<base>` |
-
-No ZINC base ID starts with `O`–`Z` (ZINC22's first character is the heavy-atom
-count, at most H49 = `N`; ZINC20's is a digit), so hashed and ZINC base IDs can't
-collide. Your original name is kept as `input_name` in `parents.tsv` and
-`library.tsv`. When one structure appears under two names, the ZINC ID wins.
-
-## 3. QupKake
-
-Preflight first, interactively, on real hardware, on **one core**: that's how
-the array runs. QupKake's `-mp N` gives each of N workers an N-thread xtb (N²
-threads on N cores; measured on Great Lakes as a load of ~82 on an 8-core job),
-and the QupKake paper itself recommends separate single-core runs in parallel. So
-each array task gets 1 CPU, and parallelism comes from many small shards.
-`llb qupkake` defaults to `-mp 1` with single-threaded xtb.
-
-```bash
-srun -A maom99 -p standard -c 1 --mem 4G -t 4:00:00 --pty bash
-time llb qupkake parents/preflight.smi -o preflight_out --name-style index
-cat preflight_out/qupkake_failed.tsv            # crashed molecules, now caught
-```
-
-Use a fresh `-o` for every timing run (QupKake reuses finished work in an existing
-one), and don't `pkill` anything while it runs: a killed run reports its
-interrupted molecules as failures.
-
-While it runs, a line every 60 s (`--progress-interval`) names the stage, since
-QupKake's own tqdm bars show only the molecule in hand. Stage 1 featurizes each
-molecule (xtb opt + Fukui) and predicts its sites; stage 2 runs once per
-predicted site (the molecule and its conjugate, re-featurized), so it usually
-dominates. When QupKake exits, a summary gives each stage's wall time:
-
-```
-  [qupkake timing] stage 1 featurize: 50/50 molecules in 0:08:55; stage 2 site pairs: 163/163 in 0:41:10; ...
-```
-
-The timing set is `parents/preflight.smi`: `prepare_parents.py --preflight N`
-picks N molecules (default 20) across heavy-atom counts, largest first, so it errs
-slow. On one core, keep N to ~10–20 for expensive chemistry.
-Seconds per molecule ≈ `real` / N, and one shard takes about shard size × that.
-Cost is linear in sites (about 2 + 4 × sites xtb runs per molecule), so
-many-site molecules dominate. Scale `--shard-size` (default 50) and `--time` from
-that with ~2× headroom, and raise `LLB_ARRAY_PARALLEL` in `hpc.env`: 1-core tasks
-pack many to a node. Then:
-
-```bash
-run_qupkake/submit_qupkake.sh parents protomers                 # + any sbatch args, e.g. --time=04:00:00
-```
-
-It activates the configured QupKake env on the login node first and checks that
-the CLI, the Python package and `XTBPATH` resolve. A wrong path fails there,
-once, rather than in every array task. Account, partition and array
-concurrency come from the config.
-
-Resubmitting the same range resumes. A task refuses to run if `shards.tsv` has
-changed since it was written, or if a shard's `DONE` came from different input.
-
-**A QupKake crash is no longer a "no sites" molecule.** QupKake catches its own
-per-molecule and per-site exceptions and drops the row. The wrapper used to
-read "absent from the SDF" as "nothing ionizable" and carry the molecule
-through **neutral**, which for an amine is a wrong protomer that looks like a
-clean one. `qupkake_protomers.py` now audits QupKake's working tree
-(`processed/*.pt`, `raw/` vs `output/` sites), excludes failures, and records
-them in `qupkake_failed.tsv`.
-
-**Amide sites.** QupKake predicts amide-type N-H (amides, anilides, ureas,
-carbamates) as acids at pKa 2-7 -- really ~13-17 -- which would make amide
-anions dominant at pH 7.4. `qupkake_protomers.py` drops those sites (and amide
-N as a base) before building states; see `dropped_sites.tsv` per shard and
-`--keep-amide-sites`. A QupKake run enumerated before this filter (2026-10-08)
-is rebuilt from its SDFs, without rerunning xtb:
-
-```bash
-llb reenumerate parents protomers protomers_fixed
-```
-
-## 4. Names
-
-```bash
-llb names --shards-dir protomers --parents parents -o library
-llb validate-names --smi library/library.smi      # DRAP's checker, via DRAP_DIR
-```
-
-Refuses to run until every shard is `DONE`. Uniqueness is over the whole library,
-and a shard can't see the others. `library.tsv` holds the name → ZINC id,
-charge and pH lookup. db2_converter writes `NO_LONG_NAME`, so this file is the
-only way back.
-
-`invertomer_of` marks N-H⁺ epimers. They're genuine stereoisomers, kept as rows,
-but one species in solution, so collapse each pair downstream (e.g. to its best
-score).
-
-**Stereo closure.** db2_converter's `--checkstereo` renames any SMILES with more
-than one stereoisomer to `NAME.0`, `NAME.1`. That makes 18 characters, and
-mol2db2 keeps the last 16. Protonation *creates* stereocentres
-(`CC[NH+](C)Cc1ccccc1` has 2 isomers, its neutral parent 1), so enumerating the
-parent is not enough. `assign_names.py` expands every protomer with
-db2_converter's exact options and gives each isomer its own stereo index.
-
-## 5. Before and after the build
-
-```bash
-llb check-stereo library/library.smi
-
-# build: creates RUNDIR (config.env, shards/, out/, logs/), preflights db2_converter
-# on this node, submits slurm/db2_array.sbatch -- John's 2026-08-27 script, with its
-# environment now taken from DB2C_SETUP / DB2C_ENV / BUILD_LIGAND_EXE
-llb submit-db2 db2_run library/library.smi --ncpus 36 --nshards 360 -- --time=48:00:00
-
-# resubmit the same command to resume; then
-llb verify-db2 library/library.tsv --outputpath db2_run/out
-```
-
-Defaults follow the db2_converter notebook (2026-08-27):
-`-n 600 --keep_max_conf --checkstereo --reseth --rotateh --dock38`, round-robin
-shards. Two changes since.
-
-**`-m conformator_bcl`** (since 2026-10-20; the notebook had `conformator`). It
-pools Conformator's and BCL::Conf's conformers. In Xia et al. 2024 (J Comput
-Chem 46:e27516, the db2_converter authors, DOCK 3.7, PoseBusters-filtered
-ensembles), the pair beats either sampler alone:
-
-- top-1 pose within 2 A: 0.57, against 0.45 for Conformator and 0.55 for BCL;
-- DUDE-Z adjusted logAUC: 21.3, against 18.7 and 17.3;
-- EF1: 13.4, against 12.0 and 12.3.
-
-The notebook chose Conformator alone for determinism and half the build time.
-The paper repeated its runs and found the sampling noise didn't change the
-outcome, and the cost is about 2x the db2 stage. lib_h18_22 was built with
-`conformator` and is being rebuilt. With a BCL method, `--pbfilter auto` turns
-on db2_converter's `--PBfilter`, as its README recommends (failure code
-`4PBfilter`). `submit-db2` and every array task run `run_qupkake/check_bcl.py`
-and refuse to start if db2_converter can't find BCL. Without that check, a
-missing BCL would quietly halve the ensembles. `--method conformator` reproduces
-the old builds.
-
-**`--mmff restrained`.** Conformator left
-some of Owen's molecules unrelaxed (an N-H 1.15 A from a C-H in every
-conformer); db2_converter's own `--MMFFopt` fixes that but folds charged
-molecules in vacuum (N+...O- contacts x3). `restrained` runs build_ligand through
-`run_qupkake/build_ligand_relaxed.py`, which swaps in epsilon = 4r and 0.3 A
-flat-bottom heavy-atom restraints: on 2,735 conformers it cleared 2,008 of 2,011
-clashes and moved heavy atoms 0.27 A. Compare variants on your own conformers
-with `llb mmff-test conformer.NAME.fixed.mol2`. `--mmff on` / `off` give
-db2_converter's plain MMFF / none. `--method`, `--pbfilter`, `--nconf`, `--mmff`, `--ncpus`,
-`--nshards`, `--mem-per-cpu` and `--time` override the defaults. For one molecule
-by hand, `llb build-ligand` runs the same launcher (and accepts a relative `-i`). Each array task runs `NCPUS` builds on
-node-local scratch, rsyncs back every 15 minutes, and refuses to start if
-singularity, build_ligand, RDKit or AMSOL's libraries are missing.
-
-A run directory belongs to one library. Resubmitting resumes without re-splitting.
-Pointing it at a different library is refused. `verify-db2` reads every shard's
-faillist: molecules build_ligand reported failing are `BUILD_FAILED` (attrition,
-recorded), and only a molecule missing with **no** reason fails the run.
-
-Keep `--checkstereo`. It's required anyway, since without it every chiral
-ligand fails `chemistrycheck`, and your notebook's corollary ("every
-stereocenter must be specified") is exactly what stereo closure guarantees.
-After closure it renames nothing. **Don't pass
-`--mergeiso`**: with closure it's a no-op, and if a split ever slipped through
-it would merge the isomers under one name silently rather than visibly.
-
-`verify_db2_build.py` now fails on `RENAMED` (a `.N` file) and `NAME_MISMATCH`
-(M-line name ≠ requested), alongside the AMSOL-vs-formal charge check that
-backs invariant 4.
-
-## 5b. Mol2 from the db2 (optional, for mol2 / flexible-ligand docking)
-
-No second 3D tool such as CORINA. Each molecule's mol2 is a conformer read back
-out of its db2 by `db2tool tomol2` (dock6_claude `294d235`, using DOCK's own db2
-reader and mol2 writer), so it is consistent with the db2 by construction:
-
-| | mol2 | db2 |
-| --- | --- | --- |
-| coordinates | one conformer set from the db2, lowest internal energy | all sets |
-| partial charges | the db2's AMSOL charges | same |
-| atom types | the db2's SYBYL types | same |
-| title | the 16-character contract name | same |
-
-```bash
-llb mol2 db2_run/out --library library/library.tsv -o library/library.mol2
-```
-
-`db2tool` comes from `DB2TOOL_EXE` / `DOCK_SETUP` in your `hpc.env`.
-
-The library as DOCK-format multi-mol2 shards (one conformer per molecule,
-DOCK's header block with name, molecular weight, formal charge, H-bond
-acceptors/donors and heavy atoms computed DOCK's way, plus LLB_ lines with the
-SMILES, parent, input name, protomer, pH and RDKit descriptors):
-
-**Broken sets.** In the db2 (db2_converter 63d6656, mol2db2/clash.py) a set is
-flagged broken by one rule only: a rotatable hydrogen (OH/NH turned by
-`--rotateh`) within 1.70 A of another hydrogen more than two bonds away. DOCK6
-samples broken sets unless `skip_broken yes` (default `no`, conf_gen_hdb.cpp);
-`llb env DOCK db2tool audit` counts all_broken / some_broken per molecule.
-
-```bash
-llb mol2-library library/library.mol2 --library library/library.tsv -o mol2_lib --shard-size 1000
-``` Over plain
-`tomol2`, the wrapper adds three things:
-
-- **One conformer per molecule.** db2_converter writes one db2 record per rigid
-  fragment, all under the same name, and `tomol2 --best` would emit each.
-- **Nothing silently missing.** A molecule whose every set is flagged broken is
-  taken from its lowest broken set and flagged in the `.tsv`
-  (`--no-broken-fallback` to drop them instead).
-- **The charge check again.** With `--library`, each mol2's summed charge must
-  match the protomer's net charge, and every library name must come out. It
-  exits 1 otherwise.
-
-It accepts any db2 files, including mol_compiler chunks: run it per chunk to get
-mol2 chunks that line up with the db2 chunks.
-
-## 6. Chunking for docking (mol_compiler)
-
-```bash
-llb chunk . db2_run/out --target-per-bin 50000 --shards 200
+llb chunk . <db2_dir> --target-per-bin 50000 --shards 200
 ```
 
 Writes `work/` (intermediates, logs) and `chunks/` (`chunk_NNNNN.db2.gz` +
 `manifest.tsv`) into the run directory, with account and partition from
 your `hpc.env`. `chunks.env` records the input and the code commit, and a
 different input into the same run directory is refused.
-`parallel/submit.slurm` still works standalone. Every setting is now an
+`parallel/submit.slurm` still works standalone. Every setting is an
 environment override (`INPUT_DIR=… RUNDIR=… bash parallel/submit.slurm`), so
 the checkout is never edited.
 
-The verified `.db2.gz` files go to `mol_compiler`'s parallel pipeline as bare
-`.db2.gz` inputs, as before. It takes a record's id from the first `M` line when no
-`ZINC` token is present, which is the case for every contract name (tested:
-`Ch300000BlLjl00C.db2.gz` → `Ch300000BlLjl00C`). Records are addressed by
-position, never by id, so the names pass through untouched. One edge: an id with
-no digit at all reads as `NO_ID` (`_looks_like_id`). A contract name needs a
-digit-free ZINC id *and* protomer and stereo indices ≥ 10 for that, which no
-zero-padded ZINC22 id produces.
+`mol_compiler` takes a record's id from its `ZINC` token, or from the first
+`M` line when there is none. Records are addressed by position, never by id, so
+names pass through untouched. One edge: an id with no digit at all reads as
+`NO_ID` (`_looks_like_id`).
+
+`rna_pipeline`'s `pipeline/library_docking/` plans the docking run itself
+(pockets × ligand batches) and has its own `make_db2_chunks.sh` for DRAP's
+jobA. Its `prepare.py` still reads an `llb pipeline` run directory
+(`db2_verification.csv`, `db2_run/out/`). Pointing it at MolSanitizer's output
+is a change in `rna_pipeline`.
+
+### Mol2 from the db2 (optional, for mol2 / flexible-ligand docking)
+
+No second 3D tool such as CORINA. Each molecule's mol2 is a conformer read back
+out of its db2 by `db2tool tomol2` (dock6_claude `294d235`, using DOCK's own db2
+reader and mol2 writer), so it is consistent with the db2 by construction:
+same coordinates (one conformer set, lowest internal energy), partial charges
+and SYBYL atom types, and the db2's molecule name as the title.
+
+```bash
+llb mol2 <db2_dir> [--library library.tsv] -o library.mol2
+llb mol2-library library.mol2 --library library.tsv -o mol2_lib --shard-size 1000
+```
+
+`db2tool` comes from `DB2TOOL_EXE` / `DOCK_SETUP` in your `hpc.env`. Details
+(broken sets, one conformer per molecule, the charge check) are in
+[docking/README.md](docking/README.md).
+
+## 4. After docking: invertomer collapse
+
+```bash
+llb collapse-invertomers scores.parquet --library library.tsv -o scores_collapsed.parquet
+```
+
+Keeps the best score per N-H+ invertomer group. It needs `library.tsv`'s
+`invertomer_of` column, from `llb names` (or from LLB's old names step, for
+`lib_h18_22`). DRAP's `stage4/collapse_invertomers.py` is the
+streaming port used at matrix scale. Its parity test loads this script by path
+and still names the old `run_qupkake/` location, so until DRAP is updated to
+`docking/` it skips that check.
 
 ## What is not done here
 
+- **Ligand chemistry and 3D**: MolSanitizer (`molsanitizer/`); naming is `llb names`.
 - **Identity-group dedupe** (`stage4/make_split.py`, SIZE_LADDER_SPEC §3) runs
   on the DRAP side.
-- db2_converter is pinned at `hnlab/db2_converter@63d6656` in `DEPENDENCIES.md`.
-  After any update, re-run `check_db2_stereo.py`.
-- **Acceptance test (invariant 4)**: after the matrix build every new molecule
-  should be `ambiguity_class = 0`.
+- **Docking**: `rna_pipeline` `pipeline/library_docking/` and DOCK6.

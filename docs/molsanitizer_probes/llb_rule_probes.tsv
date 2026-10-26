@@ -1,0 +1,36 @@
+name	smiles	llb_rule	exp_charges_7.4	evidence
+piperazine	C1CNCCN1	5.1 coupling (<=3 bonds, same ring)	+1	Williams p.19: 9.82/5.68; dication 2% at 7.4
+ethylenediamine	NCCN	5.1 coupling (<=3 bonds)	+1,+2	Williams p.14: 9.98/7.52; dication 57% at 7.4
+dabco	C1CN2CCN1CC2	5.1 coupling (<=3 bonds, same ring)	0,+1	Williams p.19: 8.19/4.18 (14% neutral at 7.4)
+putrescine	NCCCCN	5.1 coupling (5 bonds)	+2	Williams p.14: 10.84/9.31
+benzylamine	NCc1ccccc1	baseline amine	+1	9.34 (textbook value; page not checked)
+aniline	Nc1ccccc1	baseline aryl amine	0	4.6 (textbook value; page not checked)
+phenylguanidine	NC(=N)Nc1ccccc1	4.5 one site per guanidine	+1	Williams p.28: 10.88 (one pKa)
+benzamidine	NC(=N)c1ccccc1	4.5 one site per amidine	+1	Williams p.28: 11.6
+metformin	CN(C)C(=N)NC(=N)N	4.5 biguanide	+1	Williams p.28 (biguanide): 13.25/3.07
+acylsulfonamide	CS(=O)(=O)NC(=O)CCc1ccccc1	4.1b kept acid	-1	Lassalas 2016 Table 1 cpd 12: 4.94
+sulfonylurea	CS(=O)(=O)NC(=O)NCc1ccccc1	4.1b kept acid	-1	Lassalas 2016 Table 1 cpd 14: 5.04
+acyl_dimethylsulfamide	CN(C)S(=O)(=O)NC(=O)CCc1ccccc1	4.1b kept acid	-1	Lassalas 2016 Table 1 cpd 13: 5.86 (97% anion at 7.4)
+tolbutamide	CCCCNC(=O)NS(=O)(=O)c1ccc(C)cc1	4.1b kept acid	-1	MolSanitizer paper Fig. 8: 5.2
+phenylpropionic_acid	OC(=O)CCc1ccccc1	baseline carboxylic acid	-1	Lassalas 2016 Table 1 cpd 1: 4.64
+malonic_acid	OC(=O)CC(=O)O	5.1 coupling acids (4 bonds); 4.4 no CH acid	-2	Williams p.6: 2.83/5.69; monoanion 2% at 7.4
+acetanilide	CC(=O)Nc1ccccc1	4.1 amide N-H not acid	0	Reich DMSO 21.5 (water >14)
+phenylurea	NC(=O)Nc1ccccc1	4.1 urea N-H not acid	0	Reich DMSO urea 26.9
+ethyl_phenylcarbamate	CCOC(=O)Nc1ccccc1	4.1 carbamate N-H not acid	0	Reich DMSO ethyl carbamate 24.2
+benzamide	NC(=O)c1ccccc1	4.1 amide N not base	0	Grant 1983: protonated amides -0.3 to -0.6
+phthalimide	O=C1NC(=O)c2ccccc21	4.1 imide N-H kept	0,-1	Ripin & Evans: 8.30 (11% anion at 7.4, 56% at 8.4)
+meldrums_acid	CC1(C)OC(=O)CC(=O)O1	4.4 known miss (doubly ester CH)	-1	Pihlaja & Seilo 1969: 4.97
+dimedone	CC1(C)CC(=O)CC(=O)C1	4.4 1,3-diketone CH kept	-1	Williams p.28: 5.23
+acetylacetone	CC(=O)CC(C)=O	4.4 1,3-diketone CH kept	0	Williams p.31: 8.95 (3% anion at 7.4)
+nitroethane	CC[N+](=O)[O-]	4.4 nitro CH kept	0	Williams p.31: 8.6 (6% anion at 7.4)
+diethyl_malonate	CCOC(=O)CC(=O)OCC	4.4 ester CH dropped	0	Williams p.31: 13.3
+thioanisole	CSc1ccccc1	4.6 S never a base	0	Reich H2O: Me2SH+ -5.4
+tetrahydrothiophene	C1CCSC1	4.6 S never a base	0	Reich H2O: -4.4
+propyl_azide	CCCN=[N+]=[N-]	4.6 azide never a base	0	judgment (no value found)
+phenol	Oc1ccccc1	4.3 phenol kept	0	Reich H2O: 10.0
+p_nitrophenol	Oc1ccc([N+](=O)[O-])cc1	4.3 phenol kept	-1,0	7.15 (textbook value; page not checked; 64% anion at 7.4)
+benzyl_alcohol	OCc1ccccc1	4.3 alcohol never acid	0	Reich H2O: alcohols 15-16
+2-aminopyridine_imino	N=c1cccc[nH]1	2.2 imino->amino	0,+1	Williams p.24: 6.86 (amino form; 22% cation at 7.4)
+2-aminothiazole_imino	N=c1scc[nH]1	2.2 imino->amino	0	Williams p.27: 5.39 (amino form)
+4-aminopyridine_imino	N=c1cc[nH]cc1	2.2 imino->amino	+1	aromatic-N reference set: 9.17 (amino form)
+carbamate_imidic_acid	CCOC(=N)O	2.3 imidic acid->amide	0	judgment (amide form)

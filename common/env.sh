@@ -1,9 +1,9 @@
 # common/env.sh -- sourced, never executed. Finds the repo, reads
-# config/hpc.env, and activates a tool's environment the way this cluster needs.
+# hpc.env (+ users/$USER.env), and activates a tool's environment the way this cluster needs.
 #
 #   source "$LLB_ROOT/common/env.sh"
 #   llb_load_config
-#   llb_activate QUPKAKE        # or DB2C, PREP, DOCK, PKA
+#   llb_activate PREP           # or DOCK
 #
 # Written for scripts running under `set -euo pipefail`: conda's activation
 # scripts dereference unset variables, so nounset is lifted around them only.
@@ -30,35 +30,66 @@ llb_find_root() {
     return 2
 }
 
+# Config lookup:
+#   1. LLB_CONFIG, if set (an override: nothing else is tried)
+#   2. $LLB_ROOT/../hpc.env   the site layout: the checkout sits inside $LLB_SITE
+#   3. $LLB_ROOT/config/hpc.env   the old place, still read (Q27)
+# then <dir of hpc.env>/users/$USER.env if it exists: per-user keys (LLB_ACCOUNT,
+# ZINC_DATA) over the site's. LLB_SITE is the site directory when the
+# config is the site one (empty otherwise), set before sourcing so hpc.env can use it.
 llb_load_config() {
     llb_find_root || return 2
-    local cfg="${LLB_CONFIG:-$LLB_ROOT/config/hpc.env}"
+    local cfg site_cfg tried=()
+    site_cfg="$(dirname "$LLB_ROOT")/hpc.env"
+    if [[ -n "${LLB_CONFIG:-}" ]]; then
+        tried=("LLB_CONFIG=$LLB_CONFIG")
+        cfg="$LLB_CONFIG"
+    else
+        tried=("$site_cfg" "$LLB_ROOT/config/hpc.env")
+        cfg="$site_cfg"
+        [[ -f "$cfg" ]] || cfg="$LLB_ROOT/config/hpc.env"
+    fi
     if [[ ! -f "$cfg" ]]; then
-        echo "FATAL: no config at $cfg" >&2
-        echo "  cp $LLB_ROOT/config/hpc.env.example $LLB_ROOT/config/hpc.env  and edit it" >&2
+        local looked; looked="$(printf '%s, ' "${tried[@]}")"
+        echo "FATAL: no hpc.env; looked for: ${looked%, }" >&2
+        echo "  cp $LLB_ROOT/config/hpc.env.example $site_cfg  (site layout)" >&2
+        echo "  or cp it to $LLB_ROOT/config/hpc.env, and edit it" >&2
         return 2
     fi
+    local cfg_dir; cfg_dir="$(cd "$(dirname "$cfg")" && pwd)"
+    # By path, not by which branch found it: a job inherits LLB_CONFIG=$LLB_SITE/hpc.env
+    # from the shell that loaded it, and must still see the same LLB_SITE.
+    LLB_SITE=""
+    if [[ "$(cd "$cfg_dir" && pwd -P)" == "$(cd "$LLB_ROOT/.." && pwd -P)" ]]; then
+        LLB_SITE="$cfg_dir"
+    fi
+    LLB_USER_CONFIG="$cfg_dir/users/${USER:-$(id -un)}.env"
+    export LLB_SITE
     set +u
     # shellcheck disable=SC1090
     source "$cfg"
+    if [[ -f "$LLB_USER_CONFIG" ]]; then
+        # shellcheck disable=SC1090
+        source "$LLB_USER_CONFIG"
+    else
+        LLB_USER_CONFIG=""
+    fi
     set -u
     LLB_CONFIG="$cfg"
     # Resolve conda now, before any <TOOL>_SETUP can `module purge` it away.
     if [[ -z "${CONDA_BASE:-}" ]]; then
         CONDA_BASE="$(conda info --base 2>/dev/null || true)"
     fi
-    export LLB_CONFIG CONDA_BASE
+    export LLB_CONFIG LLB_USER_CONFIG CONDA_BASE
+    return 0
 }
 
 # llb_activate TOOL -- run ${TOOL}_SETUP, then activate ${TOOL}_ENV.
-# PREP falls back to QUPKAKE when PREP_ENV is empty. DOCK (db2tool, a compiled
-# binary) needs no conda env: with DOCK_ENV empty only DOCK_SETUP runs.
+# DOCK (db2tool, a compiled binary) needs no conda env: with DOCK_ENV empty only
+# DOCK_SETUP runs.
 llb_activate() {
     local tool="$1" setup_var="${1}_SETUP" env_var="${1}_ENV"
     local setup="${!setup_var:-}" env="${!env_var:-}"
-    if [[ "$tool" == PREP && -z "$env" ]]; then
-        setup="${QUPKAKE_SETUP:-}"; env="${QUPKAKE_ENV:-}"
-    fi
     if [[ -z "$env" && "$tool" == DOCK ]]; then
         local rc=0
         set +u
@@ -89,24 +120,5 @@ llb_activate() {
         echo "FATAL: activating $tool failed (setup: '${setup}', env: '$env', rc=$rc)" >&2
         return 2
     fi
-    [[ -n "${XTBPATH:-}" ]] && export XTBPATH
     echo "[$tool] env=$env python=$(command -v python)"
-}
-
-# llb_require_exe VAR DEFAULT -- resolve an executable: explicit path from the
-# config, else DEFAULT on PATH. Prints the path; fails with what was tried.
-llb_require_exe() {
-    local var="$1" default="$2" want="${!1:-}"
-    local exe="${want:-$default}"
-    if [[ "$exe" == */* ]]; then
-        [[ -x "$exe" ]] && { echo "$exe"; return 0; }
-    elif command -v "$exe" >/dev/null 2>&1; then
-        command -v "$exe"; return 0
-    fi
-    if [[ -n "$want" ]]; then
-        echo "FATAL: ${var}='$want' (in $LLB_CONFIG) is not an executable" >&2
-    else
-        echo "FATAL: '$default' is not on PATH; set ${var} in $LLB_CONFIG" >&2
-    fi
-    return 2
 }

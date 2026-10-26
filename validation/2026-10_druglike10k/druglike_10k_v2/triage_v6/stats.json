@@ -1,0 +1,114 @@
+{
+  "parents": 10000,
+  "routed_to_qupkake": 3578,
+  "routed_fraction": 0.3578,
+  "by_reason": {
+    "decided": 6422,
+    "near_window": 3324,
+    "near_window+coupled": 245,
+    "coupled": 9
+  },
+  "no_sites_predicted": 3599,
+  "parents_with_coupled_pairs": 254,
+  "molgpka_sites_dropped": {
+    "amide_n_base": 1440,
+    "amide_nh_acid": 7568,
+    "amine_nh_acid": 451,
+    "alcohol_oh_acid": 2160,
+    "carbon_acid": 54,
+    "amidine_amino_n_base": 5,
+    "oxygen_base": 9,
+    "sulfur_base": 17
+  },
+  "failed_or_unbuildable": 0,
+  "min_gap_median": 1.191,
+  "routed_fraction_by_window": {
+    "0": {
+      "near_window": 0.0002,
+      "near_window_or_coupled": 0.0256
+    },
+    "0.25": {
+      "near_window": 0.1276,
+      "near_window_or_coupled": 0.1379
+    },
+    "0.5": {
+      "near_window": 0.231,
+      "near_window_or_coupled": 0.236
+    },
+    "0.75": {
+      "near_window": 0.2594,
+      "near_window_or_coupled": 0.2634
+    },
+    "1": {
+      "near_window": 0.2959,
+      "near_window_or_coupled": 0.2985
+    },
+    "1.25": {
+      "near_window": 0.3269,
+      "near_window_or_coupled": 0.3282
+    },
+    "1.5": {
+      "near_window": 0.3569,
+      "near_window_or_coupled": 0.3578
+    },
+    "1.75": {
+      "near_window": 0.3844,
+      "near_window_or_coupled": 0.3847
+    },
+    "2": {
+      "near_window": 0.4102,
+      "near_window_or_coupled": 0.4103
+    },
+    "2.25": {
+      "near_window": 0.4301,
+      "near_window_or_coupled": 0.4302
+    },
+    "2.5": {
+      "near_window": 0.4465,
+      "near_window_or_coupled": 0.4465
+    },
+    "2.75": {
+      "near_window": 0.4566,
+      "near_window_or_coupled": 0.4566
+    },
+    "3": {
+      "near_window": 0.4714,
+      "near_window_or_coupled": 0.4714
+    },
+    "3.25": {
+      "near_window": 0.4838,
+      "near_window_or_coupled": 0.4838
+    },
+    "3.5": {
+      "near_window": 0.4975,
+      "near_window_or_coupled": 0.4975
+    },
+    "3.75": {
+      "near_window": 0.5143,
+      "near_window_or_coupled": 0.5143
+    },
+    "4": {
+      "near_window": 0.5346,
+      "near_window_or_coupled": 0.5346
+    }
+  },
+  "settings": {
+    "ph": [
+      6.4,
+      7.4,
+      8.4
+    ],
+    "route_window": 1.5,
+    "margin": 1.0,
+    "coupling_bonds": 3,
+    "coupled": "route",
+    "keep_amide_sites": false,
+    "site_filter_version": 6,
+    "min_population": 0.01,
+    "max_states": 8,
+    "max_ambiguous": 6,
+    "coupling": "1"
+  },
+  "routed_shards": 358,
+  "qupkake_shard_size": 10
+}
