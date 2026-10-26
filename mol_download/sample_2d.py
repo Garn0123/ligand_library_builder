@@ -35,7 +35,7 @@ H14-H28 (~960 GB) is ~5 h at run.sh -j 4 if the server scales, ~19 h if not.
 A local pass reads ~16M lines/s (gzip -dc), so H28 (~26B lines) is ~30 min.
 
 Outputs, per bin, in --outdir:
-    H17.smi            'SMILES ZINCID', the input to prepare_parents.py
+    H17.smi            'SMILES ZINCID', the input to ligand construction (MolSanitizer)
     H17.manifest.tsv   per tranche file: lines, sampled (+ quota/window if streamed)
     H17.done           written last, records mode/seed/sha256; skipped on re-run
 

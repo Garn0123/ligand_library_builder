@@ -1,5 +1,11 @@
 # lib_h18_22: the first production library (2026-10-16)
 
+> **Code at tag `llb-full-2026-10`.** The construction code this record cites
+> (`pka_triage/`, `run_qupkake/`, `pipeline/`, `environments/`) was removed on
+> 2026-10-26, when ligand construction moved to MolSanitizer. Paths and commits
+> here refer to that tag (`git checkout llb-full-2026-10`). Kept in the tree
+> because `lib_h18_22` was built and docked with that code.
+
 `REPORT.md` is the run's own report, written by `llb pipeline` (commit e03b65a at
 start; three fixes were pulled mid-run, before per-stage commits were recorded:
 917e7b4, e935fc5, 3e0dcb7). 50,000 parents, 10,000 per heavy-atom bin H18-H22

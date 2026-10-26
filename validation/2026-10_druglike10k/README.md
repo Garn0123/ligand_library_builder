@@ -1,5 +1,11 @@
 # Drug-like 10k validation (October 2026)
 
+> **Code at tag `llb-full-2026-10`.** The construction code this record cites
+> (`pka_triage/`, `run_qupkake/`, `pipeline/`, `environments/`) was removed on
+> 2026-10-26, when ligand construction moved to MolSanitizer. Paths and commits
+> here refer to that tag (`git checkout llb-full-2026-10`). Kept in the tree
+> because `lib_h18_22` was built and docked with that code.
+
 Summary files from the two validation runs behind `DECISIONS.md` and
 `pka_triage/TRIAGE.md`. Same 10,000 parents both times: a uniform draw from ZINC22
 2D H18-H22, proportional to bin size (`llb sample --heavy 18-22 --total 10000 --local

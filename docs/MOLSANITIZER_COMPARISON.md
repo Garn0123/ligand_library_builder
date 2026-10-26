@@ -1,5 +1,11 @@
 # LLB vs MolSanitizer: what differs, what we checked, what to test next
 
+> **Code at tag `llb-full-2026-10`.** The construction code this comparison cites
+> (`pka_triage/`, `run_qupkake/`, `pipeline/`, `environments/`) was removed on
+> 2026-10-26, when ligand construction moved to MolSanitizer. Paths and commits
+> here refer to that tag (`git checkout llb-full-2026-10`). Kept in the tree
+> because `lib_h18_22` was built and docked with that code.
+
 2026-10-20. Against LLB `feat/pipeline` at 8c0cff3 (site filter v6, coupling v1,
 aromatic-N v2) and MolSanitizer 0.7.4 (PyPI). Paper: Lam, Pach, Ullmann, …, Irwin,
 Carlsson, Cabeza de Vaca, *MolSanitizer: an open-source pipeline to prepare

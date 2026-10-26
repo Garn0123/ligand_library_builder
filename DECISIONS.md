@@ -1,5 +1,11 @@
 # Decision record: how ligand_library_builder chooses what to build
 
+> **Code at tag `llb-full-2026-10`.** The construction code this record cites
+> (`pka_triage/`, `run_qupkake/`, `pipeline/`, `environments/`) was removed on
+> 2026-10-26, when ligand construction moved to MolSanitizer. Paths and commits
+> here refer to that tag (`git checkout llb-full-2026-10`). Kept in the tree
+> because `lib_h18_22` was built and docked with that code.
+
 Every choice that decides which molecules, protonation states, tautomers and
 stereoisomers end up in a library, with the setting it governs, the commit that
 made it, the evidence behind it, and what was tried or considered instead.

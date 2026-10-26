@@ -1,98 +1,94 @@
 # ligand_library_builder
 
-Setting up a small-molecule library for docking: ZINC SMILES in, chunked
-DOCK-ready db2 out, every molecule carried under a name that survives the db2
-format (`NAMING_CONTRACT.md` in the DRAP project, enforced here by
-`run_qupkake/assign_names.py`).
+The two ends of building a small-molecule docking library: choosing molecules
+from ZINC22, and turning finished db2 files into docking jobs. The middle step,
+building DOCK-ready db2s from SMILES, is MolSanitizer's job (Carlsson lab;
+set up under `molsanitizer/`).
+
+```
+ZINC download  ->  sample bins  ->  MolSanitizer (see molsanitizer/)  ->  docking jobs
+llb fetch          llb sample       SMILES -> protonated, 3D, db2         llb chunk / llb mol2
+```
 
 ```
 bin/llb         one command for every step; put bin/ on PATH and run from any run directory
-mol_download/   ZINC22 tranches: fetch (run.sh), verify, and sample N per heavy-atom bin
-run_qupkake/    parents -> QupKake micro-pKa -> protomers -> contract names -> db2 checks
-pka_triage/     MolGpKa triage + merge: QupKake only where it matters (branch feat/pka-triage)
-environments/   conda specs for envs this repo defines (llb_pka.yml)
+mol_download/   ZINC22 tranches: fetch (run.sh), verify, and sample by heavy-atom bin;
+                zinc3d/: ZINC22's own 3D db2s for a list of ZINC ids
 mol_compiler/   db2 -> load-balanced chunks + manifest, the unit of work for docking
-common/         env.sh / with_env.sh: activate each tool the way config/hpc.env says
-config/         hpc.env.example -- the ONLY place tool paths live; sites/: cluster profiles
+docking/        mol2 from a db2, DOCK-header mol2 shards, invertomer collapse after docking
+common/         env.sh / with_env.sh: activate each tool the way hpc.env says
+config/         hpc.env.example: the ONLY place tool paths live
+environments/   llb.yml, the one conda env (PREP) this repo defines
 ```
 
-Docking itself (DOCK6, `dock6_claude`) and the models trained on its output live
-elsewhere. This repo stops at chunked db2.
+Docking itself (DOCK6, `dock6_claude`; the run driver in `rna_pipeline`,
+`pipeline/library_docking/`) and the models trained on its output live
+elsewhere.
 
 ## Setup on a new machine
 
 One site directory per cluster, on shared group storage (never `~`), with the
-checkout inside it (`docs/INSTALL_DESIGN.md`):
+checkout inside it:
 
 ```bash
 LLB_SITE=/scratch/group/<project>/llb        # or Turbo on Great Lakes
 git clone git@github.com:Garn0123/ligand_library_builder.git $LLB_SITE/ligand_library_builder
 cp $LLB_SITE/ligand_library_builder/config/hpc.env.example $LLB_SITE/hpc.env   # cluster settings; edit it
-mkdir -p $LLB_SITE/users && $EDITOR $LLB_SITE/users/$USER.env   # yours: ZBH_LICENSE, LLB_MAIL, LLB_ACCOUNT
+mkdir -p $LLB_SITE/users && $EDITOR $LLB_SITE/users/$USER.env   # yours: LLB_ACCOUNT, ZINC_DATA
 export PATH=$LLB_SITE/ligand_library_builder/bin:$PATH          # ~/.bashrc; the only line there
-llb doctor                                     # checks every tool and license, in seconds
-llb doctor --node                              # the same, on a compute node of LLB_PARTITION
 llb help                                       # then: cd to a run directory and go
 ```
 
 `llb` finds `hpc.env` as `../hpc.env` from its checkout, then reads
 `users/$USER.env` beside it, so one `hpc.env` serves everyone on the cluster.
-The old ways still work: `export LLB_CONFIG=/path/to/hpc.env` (an override,
-e.g. `~/.config/llb/hpc.env`), or `config/hpc.env` inside the checkout.
-`config/sites/` holds what is known about Great Lakes, Lighthouse and ACES.
+`export LLB_CONFIG=/path/to/hpc.env` overrides that, and `config/hpc.env`
+inside the checkout still works.
 
-`llb pipeline start` runs `llb doctor` as its first stage, so a broken tool
-stops the run before any work is queued.
-
-Environments are separate on purpose: QupKake pins `xtb 6.4.1` and its own
-torch stack, and db2_converter needs its own module set. `hpc.env` names one env
-per tool plus a setup hook for each; `llb <step>` runs each step inside the right
-one, and `llb env TOOL cmd` runs anything else there.
+Download, sampling and chunking need only the system `python3` and SLURM. The
+`docking/` tools and the zinc3d steps run in `PREP`, a conda env made from
+`environments/llb.yml`; `llb mol2` needs `db2tool` (`DOCK` in `hpc.env`).
 
 ## Running it
 
-**[UPSTREAM.md](UPSTREAM.md)** is the runbook: every step in order, the file each
-one writes, and the check that gates the next. Start there.
+**[UPSTREAM.md](UPSTREAM.md)** is the runbook: every step in order, the file
+each one writes, and the check that gates the next. Start there.
 
 Per-component detail:
 [mol_download/README.md](mol_download/README.md) (fetching from files.docking.org
 politely, and the gotchas that actually happened),
-[run_qupkake/README.md](run_qupkake/README.md) (how protonation states are chosen),
-[mol_compiler/README.md](mol_compiler/README.md) (the db2 record model and chunking).
-
-## One command: `llb pipeline`
-
-    llb pipeline start samples/H*.smi -o lib_h18_22          # returns at once
-    llb pipeline status lib_h18_22
-
-Runs parents -> triage -> QupKake -> reenumerate/merge -> names -> checks -> db2 ->
-verify as chained SLURM jobs (a small control job after each stage checks its
-outputs and submits the next), and stops at verified db2s. Every stage has a stop
-threshold (loss rate above which it halts and mails `LLB_MAIL`); failed or
-timed-out tasks are retried once at twice the time. `RUN/ledger.tsv` has one row
-per input molecule and its fate, `RUN/attrition.tsv` the counts per stage and
-heavy-atom bin, `RUN/REPORT.md` the summary with settings, versions and cost.
-`--validate` also runs QupKake on every parent and `llb compare`; `--set
-key=value` changes a setting (`qupkake_time=00:45:00`, `stop.db2=0.08`).
-After a stop: look, then `llb pipeline resume RUN [--set ...]`. Design and
-thresholds: `docs/PIPELINE_DESIGN.md`.
+[mol_download/zinc3d/RUNBOOK.md](mol_download/zinc3d/RUNBOOK.md) (ZINC22's 3D db2s),
+[mol_compiler/README.md](mol_compiler/README.md) (the db2 record model and chunking),
+[docking/README.md](docking/README.md) (mol2 and invertomer collapse).
 
 ## Tests
 
-`tests/` covers the library-build logic: the site filter, coupled states, the
-aromatic-N hybrid, tautomers, the 3D stereo check, names, verify-db2 and
-collapse-invertomers, each pinned to the molecule that motivated it. Run from the
-repo root in the `llb_pka` env:
+    python -m pytest                          # tests/: docking/ tools, hpc.env lookup
+    (cd mol_compiler && python -m pytest)     # chunking
 
-    python -m pytest                     # ~1 min; MolGpKa tests need MOLGPKA_DIR
-
-GitHub Actions runs it on every push (`.github/workflows/tests.yml`). QupKake/xtb
-and db2_converter are not exercised there: a stand-in QupKake writes the SDF, and
-the db2 tools are tested on small fake db2 files.
+Run them in the `llb` env. GitHub Actions runs both on every push
+(`.github/workflows/tests.yml`).
 
 ## History
 
-This repo was `mol_compiler`, then briefly `small_molecule_prep`. Its history is intact under `mol_compiler/`
-(`git log --follow mol_compiler/<file>`). `mol_download` and `run_qupkake` joined
-it on 2026-09-23, because the three run in sequence, share one naming contract,
-and change together.
+This repo was `mol_compiler`, then briefly `small_molecule_prep`. Its history is
+intact under `mol_compiler/` (`git log --follow mol_compiler/<file>`).
+`mol_download` and `run_qupkake` joined it on 2026-09-23.
+
+From September to October 2026 LLB also built the ligands: MolGpKa triage,
+QupKake protonation, 16-character contract names, and db2 via db2_converter
+(conformator + BCL), driven end to end by `llb pipeline`. `lib_h18_22` (50k
+parents, the first production library) was built and docked with it. On
+2026-10-26 that construction code was removed in favour of MolSanitizer
+(compared in `docs/MOLSANITIZER_COMPARISON.md`).
+
+**The full pipeline is at tag `llb-full-2026-10`** (branch `archive/llb-full`).
+That tag merges every branch that was open then: the pipeline, the install design and
+toolchain image, the MolSanitizer comparison, the decision record and the
+validation records. `llb-full-2026-10-reindex` keeps the unmerged
+`mol_compiler` `05_reindex` work.
+`git checkout llb-full-2026-10` gives back a working `llb pipeline`.
+
+Kept in this tree because they justify `lib_h18_22`:
+[DECISIONS.md](DECISIONS.md) (why each construction choice was made) and
+[validation/](validation/) (the runs that tested it). The code they cite is at
+`llb-full-2026-10`.
