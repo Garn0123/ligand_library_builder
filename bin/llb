@@ -8,11 +8,12 @@
 #
 #   export PATH=/path/to/opt/ligand_library_builder/bin:$PATH     # e.g. in ~/.bashrc
 #   export LLB_CONFIG=$HOME/.config/llb/hpc.env                    # optional; default
-#                                                                  #   <repo>/config/hpc.env
+#                                       #   <repo>/../hpc.env (site layout), else <repo>/config/hpc.env
 #   mkdir -p /scratch/.../my_run && cd /scratch/.../my_run
 #   llb parents my_ligands.smi.gz -o parents
 #
-# Each step runs inside the environment config/hpc.env names for it.
+# Each step runs inside the environment hpc.env names for it (common/env.sh says
+# where hpc.env is looked for; users/$USER.env beside it adds per-user keys).
 #
 # Steps, in pipeline order:
 #   llb print-urls ARGS       mol_download/sample_2d.py --print-urls     (no env)
@@ -34,7 +35,7 @@
 #   llb submit-qupkake PARENTS OUT [sbatch args]                         (logs -> ./logs)
 #   llb reenumerate PARENTS QK_IN QK_OUT  rebuild protomers from QupKake's SDFs (PREP)
 #   llb names ARGS            run_qupkake/assign_names.py                (PREP)
-#   llb validate-names ARGS   DRAP's stage4/validate_names.py, at DRAP_DIR (no env)
+#   llb validate-names ARGS   run_qupkake/validate_names.py, DRAP's checker (DRAP_DIR overrides) (no env)
 #   llb check-stereo SMI      run_qupkake/check_db2_stereo.py            (DB2C)
 #   llb submit-db2 RUNDIR SMI [opts] [-- sbatch args]                    (run_qupkake/submit_db2.sh)
 #   llb verify-db2 ARGS       run_qupkake/verify_db2_build.py            (DB2C)
@@ -48,6 +49,8 @@
 #   llb chunk RUNDIR DB2DIR [opts]  mol_compiler/parallel/submit_chunks.sh  (no env)
 #
 # Utilities:
+#   llb doctor [--stage LIST] [--node] [--smoke] [--json FILE]
+#                             is this machine set up? one line per check, with the fix
 #   llb env TOOL CMD...       run CMD in TOOL's env (QUPKAKE, DB2C, PREP, DOCK, PKA)
 #   llb squeeze               filter stdin: collapse repeated RDKit warnings
 #                             (e.g. llb env DB2C build_ligand ... 2>&1 | llb squeeze)
@@ -94,13 +97,17 @@ case "$step" in
     reenumerate)    exec "$W" PREP python "$Q/reenumerate.py" "$@" ;;
     names)          exec "$W" PREP python "$Q/assign_names.py" "$@" ;;
     validate-names)
-        # stdlib only, so no env; the DRAP checkout is the one place it lives
-        source "$LLB_ROOT/common/env.sh"; llb_load_config
-        v="${DRAP_DIR:-}/stage4/validate_names.py"
-        [[ -n "${DRAP_DIR:-}" && -f "$v" ]] || {
-            echo "llb validate-names: set DRAP_DIR in $LLB_CONFIG to the DRAP checkout" \
-                 "(the directory holding stage4/validate_names.py); now '${DRAP_DIR:-}'" >&2
-            exit 2; }
+        # stdlib only, so no env and no config needed: the bundled copy of DRAP's
+        # checker, or DRAP's own when DRAP_DIR is set (to check a newer DRAP)
+        source "$LLB_ROOT/common/env.sh"; llb_load_config 2>/dev/null || true
+        v="$Q/validate_names.py"
+        if [[ -n "${DRAP_DIR:-}" ]]; then
+            v="$DRAP_DIR/stage4/validate_names.py"
+            [[ -f "$v" ]] || {
+                echo "llb validate-names: DRAP_DIR='$DRAP_DIR' (from ${LLB_CONFIG:-the environment}) has no" \
+                     "stage4/validate_names.py; fix it, or unset it to use the bundled copy" >&2
+                exit 2; }
+        fi
         exec python3 "$v" "$@" ;;
     check-stereo)   exec "$W" DB2C python "$Q/check_db2_stereo.py" "$@" ;;
     submit-db2)     exec "$Q/submit_db2.sh" "$@" ;;
@@ -111,6 +118,7 @@ case "$step" in
     clash-report)   exec python3 "$Q/clash_report.py" "$@" ;;
     mmff-test)      exec "$W" PREP python "$Q/mmff_variants.py" "$@" ;;
     chunk)          exec "$LLB_ROOT/mol_compiler/parallel/submit_chunks.sh" "$@" ;;
+    doctor)         exec python3 "$LLB_ROOT/common/doctor.py" "$@" ;;
     env)            exec "$W" "$@" ;;
     squeeze)        exec awk -f "$LLB_ROOT/common/squeeze_log.awk" ;;
     root)           echo "$LLB_ROOT" ;;

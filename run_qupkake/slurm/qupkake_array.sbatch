@@ -17,8 +17,8 @@
 # cores to each" (JCTC 2024, 20, 6946, sec. 3.3). So: -mp 1, single-threaded
 # xtb, and parallelism from more array tasks with smaller shards.
 #
-# Submit with run_qupkake/submit_qupkake.sh, which preflights the QupKake env
-# on the login node and passes account, partition, LLB_ROOT, LLB_CONFIG,
+# Submit with run_qupkake/submit_qupkake.sh, which runs `llb doctor --stage
+# qupkake` on the login node and passes account, partition, LLB_ROOT, LLB_CONFIG,
 # PARENTS_DIR and OUT_DIR. Software locations come from config/hpc.env
 # (QUPKAKE_SETUP / QUPKAKE_ENV / QUPKAKE_EXE / XTBPATH), not from this file.
 #
@@ -98,10 +98,18 @@ if [[ -f "$out/DONE" && "$FORCE" != "1" ]]; then
 fi
 
 # ---- environment ---------------------------------------------------------------
+# After the DONE check, so finished shards skip it; doctor activates on its own.
+if [[ -z "${LLB_IN_IMAGE:-}" ]] && ! "$LLB_ROOT/bin/llb" doctor --stage qupkake; then
+    echo "FATAL: llb doctor failed on $(hostname) -- environment is broken" >&2
+    exit 2
+fi
+# Image mode: the rest runs inside the toolchain image, from the repo's copy of
+# this script (SLURM's spooled copy is not bound there).
+if [[ -z "${LLB_IN_IMAGE:-}" ]] && llb_image_env QUPKAKE >/dev/null; then
+    exec "$LLB_ROOT/common/with_env.sh" QUPKAKE bash "$LLB_ROOT/run_qupkake/slurm/qupkake_array.sbatch" "$@"
+fi
 llb_activate QUPKAKE
 QK_EXE="$(llb_require_exe QUPKAKE_EXE qupkake)"
-python -c 'import qupkake, rdkit' \
-    || { echo "FATAL: env ${QUPKAKE_ENV} lacks qupkake or rdkit" >&2; exit 2; }
 export OMP_NUM_THREADS=1       # one core: xtb --vfukui and torch must not thread either
 export MKL_NUM_THREADS=1
 if [[ "${SLURM_CPUS_PER_TASK:-1}" -gt 1 ]]; then

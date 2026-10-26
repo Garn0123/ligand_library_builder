@@ -8,7 +8,7 @@ steps (`llb parents` ... `llb verify-db2`) unchanged; it does not reimplement th
 
 | command | what it does |
 | --- | --- |
-| `llb pipeline start SMILES... -o RUN [--validate] [--set key=value ...]` | writes `RUN/pipeline.json`, submits the first stage; returns |
+| `llb pipeline start SMILES... -o RUN [--validate] [--set key=value ...]` | checks `hpc.env` (`LLB_ACCOUNT`), writes `RUN/pipeline.json`, submits the first control job; returns. Activates no env: on ACES the container runtime exists only on compute nodes |
 | `llb pipeline status RUN` | stage table, job ids, counts so far, why it stopped (if it did) |
 | `llb pipeline advance RUN` | one idempotent step forward (what the control jobs call; safe by hand) |
 | `llb pipeline resume RUN` | after a stop: re-check that stage's gate and continue |
@@ -18,7 +18,9 @@ steps (`llb parents` ... `llb verify-db2`) unchanged; it does not reimplement th
 (1 core, ~10 min) that runs `advance`: it checks the stage's outputs, applies the
 gate, then submits the next stage plus the next control job with
 `--dependency=afterany:<array>`. `start` is the only command you type; nothing has
-to stay alive on a login node. **Manual mode** is the same `advance`, run by you.
+to stay alive on a login node. The first control job starts with `preflight`
+(`llb doctor` and every env's versions, on the compute node), so a broken
+environment stops the run before any work is queued. **Manual mode** is the same `advance`, run by you.
 A lock file stops two `advance` calls from acting at once. Stage sizes (routed
 shards, names) are only known when the previous stage ends, which is why the
 chain extends itself rather than being submitted all at once.
@@ -27,6 +29,7 @@ chain extends itself rather than being submitted all at once.
 
 | # | stage | runs as | writes | gate: stop if | recorded, not stopping |
 | --- | --- | --- | --- | --- | --- |
+| 0 | preflight | control job | `pipeline/doctor.json`, `pipeline/versions.json` | any `llb doctor --stage host,prep,pka,qupkake,db2` FAIL (the stop names the host and the FAIL lines; fix, then `resume`) | doctor warnings (e.g. a UNICON license under 30 days), host |
 | 1 | parents | control job | `parents/` | >1% unparsable/conflicting ids | rejected rows, tautomer fixes |
 | 2 | triage | control job | `triage/` | MolGpKa failed on >1% | route + reason per parent |
 | 3 | QupKake | array, 1 core/task | `protomers_qk/` | shards still missing after one retry at 2x time | `qupkake_embed_failed` etc. |
@@ -52,10 +55,18 @@ in waves, each wave's control job submitting the next.
 values refuses unless it is a new `-o`):
 inputs (paths, sha256, line counts); every setting (pH list, route window,
 margin, min population, max states, shard sizes, time limits, cores, MMFF mode,
-nconf, method); versions (LLB commit, `SITE_FILTER_VERSION`,
-`COUPLING_VERSION`, `AROMATIC_N_VERSION`, db2_converter commit, RDKit in each env,
-QupKake and MolGpKa versions, MolGpKa weight sha256); cluster (account,
-partition, `LLB_ARRAY_PARALLEL`).
+nconf, method); cluster (account, partition, `LLB_ARRAY_PARALLEL`).
+
+**`pipeline/versions.json`** (written by `preflight`, rewritten if `preflight`
+is rerun after a fix): LLB commit, `SITE_FILTER_VERSION`, `COUPLING_VERSION`,
+`AROMATIC_N_VERSION`, db2_converter commit, RDKit in each env, QupKake and
+MolGpKa versions, MolGpKa weight sha256. Runs started before `preflight`
+existed (2026-10-20) have these in `pipeline.json` instead; their state has no
+`preflight` entry, which is treated as done, and `REPORT.md` reads
+`pipeline.json`'s versions.
+
+**`pipeline/doctor.json`**: every `llb doctor` check of the preflight
+(stage, check, status, detail, fix) and the host it ran on.
 
 **`pipeline/state.json`**: per stage: status, job ids, start/end, retry count,
 gate result, counts.
@@ -73,7 +84,8 @@ gate result, counts.
 
 **`attrition.tsv`**: molecules in and out at each stage, by heavy-atom bin.
 
-**`REPORT.md`**: attrition, cost (`llb timing`), versions, gates passed, and
+**`REPORT.md`**: preflight (host, doctor checks and warnings), attrition, cost
+(`llb timing`), versions, gates passed, and
 anything stopped and resumed: the page to attach to a methods section.
 
 ## Changes needed in existing steps
@@ -83,7 +95,7 @@ anything stopped and resumed: the page to attach to a methods section.
 - `names`, `merge`, `verify-db2`: already write the counts the ledger needs;
   the ledger is assembled from their files in stage 8, not threaded through.
 - A tiny `llb versions` that prints every version above as JSON (run once per
-  env at `start`).
+  env by `preflight`; `common/versions.py`).
 
 ## Settled in review (2026-10-16)
 

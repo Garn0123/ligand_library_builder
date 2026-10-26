@@ -13,7 +13,7 @@ pka_triage/     MolGpKa triage + merge: QupKake only where it matters (branch fe
 environments/   conda specs for envs this repo defines (llb_pka.yml)
 mol_compiler/   db2 -> load-balanced chunks + manifest, the unit of work for docking
 common/         env.sh / with_env.sh: activate each tool the way config/hpc.env says
-config/         hpc.env.example -- the ONLY place tool paths live
+config/         hpc.env.example -- the ONLY place tool paths live; sites/: cluster profiles
 ```
 
 Docking itself (DOCK6, `dock6_claude`) and the models trained on its output live
@@ -21,14 +21,28 @@ elsewhere. This repo stops at chunked db2.
 
 ## Setup on a new machine
 
+One site directory per cluster, on shared group storage (never `~`), with the
+checkout inside it (`docs/INSTALL_DESIGN.md`):
+
 ```bash
-git clone git@github.com:Garn0123/ligand_library_builder.git /nfs/turbo/.../opt/ligand_library_builder
-mkdir -p ~/.config/llb
-cp /nfs/turbo/.../opt/ligand_library_builder/config/hpc.env.example ~/.config/llb/hpc.env  # edit it
-export PATH=/nfs/turbo/.../opt/ligand_library_builder/bin:$PATH   # ~/.bashrc
-export LLB_CONFIG=~/.config/llb/hpc.env                            # ~/.bashrc
+LLB_SITE=/scratch/group/<project>/llb        # or Turbo on Great Lakes
+git clone git@github.com:Garn0123/ligand_library_builder.git $LLB_SITE/ligand_library_builder
+cp $LLB_SITE/ligand_library_builder/config/hpc.env.example $LLB_SITE/hpc.env   # cluster settings; edit it
+mkdir -p $LLB_SITE/users && $EDITOR $LLB_SITE/users/$USER.env   # yours: ZBH_LICENSE, LLB_MAIL, LLB_ACCOUNT
+export PATH=$LLB_SITE/ligand_library_builder/bin:$PATH          # ~/.bashrc; the only line there
+llb doctor                                     # checks every tool and license, in seconds
+llb doctor --node                              # the same, on a compute node of LLB_PARTITION
 llb help                                       # then: cd to a run directory and go
 ```
+
+`llb` finds `hpc.env` as `../hpc.env` from its checkout, then reads
+`users/$USER.env` beside it, so one `hpc.env` serves everyone on the cluster.
+The old ways still work: `export LLB_CONFIG=/path/to/hpc.env` (an override,
+e.g. `~/.config/llb/hpc.env`), or `config/hpc.env` inside the checkout.
+`config/sites/` holds what is known about Great Lakes, Lighthouse and ACES.
+
+`llb pipeline start` runs `llb doctor` as its first stage, so a broken tool
+stops the run before any work is queued.
 
 Environments are separate on purpose: QupKake pins `xtb 6.4.1` and its own
 torch stack, and db2_converter needs its own module set. `hpc.env` names one env

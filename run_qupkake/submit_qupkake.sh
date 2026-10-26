@@ -14,10 +14,9 @@
 # Each task gets 1 CPU and 4G (LLB_QUPKAKE_MEM to change); concurrency per array
 # is LLB_ARRAY_PARALLEL from config/hpc.env -- with 1-core tasks, raise it.
 #
-# The preflight activates the configured QupKake env HERE and checks that the
-# CLI, the Python package and XTBPATH all resolve, so a wrong path fails once on
-# the login node instead of once per array task. Resubmitting resumes: finished
-# shards are skipped.
+# The preflight (`llb doctor --stage qupkake`) checks the QupKake env, its
+# imports and xtb HERE, so a wrong path fails once on the login node instead of
+# once per array task. Resubmitting resumes: finished shards are skipped.
 
 set -euo pipefail
 
@@ -42,21 +41,8 @@ N="$(awk -F= '$1=="n_shards"{print $2}' "$META")"
     echo "FATAL: no n_shards in $META; keys present:" >&2; cut -d= -f1 "$META" | sed 's/^/  /' >&2; exit 2; }
 
 echo "== preflight (config: $LLB_CONFIG)"
-# Every check exits explicitly: `set -e` is SUSPENDED inside a subshell on the
-# left of `||`, so a failing command there would otherwise fall through and
-# the array would be submitted with a broken environment.
-( llb_activate QUPKAKE || exit 2
-  exe="$(llb_require_exe QUPKAKE_EXE qupkake)" || exit 2
-  echo "  qupkake CLI   $exe"
-  python -c 'import qupkake, rdkit; print("  import        qupkake, rdkit", rdkit.__version__)' \
-      || { echo "FATAL: qupkake or rdkit not importable in ${QUPKAKE_ENV}" >&2; exit 2; }
-  if [[ -n "${XTBPATH:-}" ]]; then
-      [[ -e "$XTBPATH" ]] || { echo "FATAL: XTBPATH=$XTBPATH does not exist" >&2; exit 2; }
-      echo "  XTBPATH       $XTBPATH"
-  else
-      echo "  XTBPATH       (unset: QupKake's bundled xtb)"
-  fi
-) || exit 2
+"$LLB_ROOT/bin/llb" doctor --stage qupkake \
+    || { echo "FATAL: llb doctor failed (see above); nothing submitted" >&2; exit 2; }
 
 # Logs go to the run directory you submit from, never into the repo.
 LOGDIR="${LLB_LOGDIR:-$PWD/logs}"

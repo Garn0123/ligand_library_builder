@@ -1,0 +1,56 @@
+LLB toolchain image -- third-party software and licences
+
+This image bundles third-party software so that ligand_library_builder (LLB)
+runs the same way on any cluster. LLB's own code is not in the image. The exact
+versions, commits and checksums are in /opt/llb/manifest.json. Licence texts are
+in /opt/llb/licenses/.
+
+AMSOL 7.1, DOCK-patched build                    /opt/db2_converter/db2_converter/amsol/amsol7.1_patched
+  Licence: Apache License 2.0 (licenses/AMSOL-Apache-2.0.txt).
+  Original: AMSOL 7.1, Truhlar group, University of Minnesota
+  (http://comp.chem.umn.edu/amsol/).
+  Modified: this is the DOCK-patched build (https://wiki.docking.org/index.php/AMSOL)
+  as shipped in db2_converter 63d6656, with include/SIZES.i raised from
+  MAXHEV=60, MAXLIT=60 to MAXHEV=80, MAXLIT=110 and recompiled
+  (db2_converter/amsol/README.md). LLB redistributes that binary unchanged.
+
+BCL (BioChemicalLibrary) 4.3.1, static build     /opt/bcl
+  Licence: MIT (licenses/BCL-MIT.txt). Copyright (c) 2014 Vanderbilt University.
+  Source: https://github.com/BCLCommons/bcl (tag BCL-v4.3.1-linux), built
+  statically as described in LLB's container/bcl/BUILD.md.
+
+QupKake (commit f7a294e)                         /opt/conda/envs/qupkake
+  Licence: BSD 3-Clause (licenses/QupKake-BSD-3-Clause.txt).
+  Copyright 2023 Omri D Abarbanel. Source: https://github.com/Shualdon/QupKake
+
+xtb 6.4.1, built from the release source         /opt/xtb
+  Licence: GNU LGPL v3 or later (licenses/xtb-COPYING.LESSER.txt, which
+  supplements the GPL v3 in licenses/xtb-COPYING.txt).
+  Copyright Grimme group, University of Bonn. Unmodified source:
+  https://github.com/grimme-lab/xtb/releases/download/v6.4.1/xtb-6.4.1.tar.xz
+  (sha256 in manifest.json).
+
+MolGpKa (commit 4dc8352)                         /opt/MolGpKa
+  Licence: MIT (licenses/MolGpKa-MIT.txt, the repository's LICENSE.md as
+  published). Source: https://github.com/Xundrug/MolGpKa
+
+db2_converter (commit 63d6656)                   /opt/db2_converter
+  Licence: none stated. The repository (https://github.com/hnlab/db2_converter)
+  has no licence file at this commit. It is included unmodified except that
+  db2_converter/config.py points its BCL entries at /opt/bcl, the edit its
+  README asks every user to make.
+
+Conda environments                               /opt/conda/envs/{qupkake,db2_converter,llb_pka}
+  Installed from LLB's environments/*.linux-64.lock (conda-forge and PyPI
+  packages, each under its own licence, recorded in each package's metadata
+  under the environment's conda-meta/ and site-packages/*.dist-info/).
+  Includes AmberTools, Open Babel (GPL-2.0), RDKit (BSD-3-Clause), PyTorch
+  (BSD-3-Clause), PoseBusters (BSD-3-Clause) and dimorphite_dl (Apache-2.0).
+
+micromamba                                       /usr/local/bin/micromamba
+  Licence: BSD 3-Clause. https://github.com/mamba-org/mamba
+
+Ubuntu 22.04 base image packages: see /usr/share/doc/*/copyright.
+
+Not included: UNICON and conformator (ZBH, University of Hamburg; licensed per
+user, not redistributable), DOCK / db2tool.

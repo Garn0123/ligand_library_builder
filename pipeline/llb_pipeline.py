@@ -9,7 +9,9 @@ llb_pipeline.py -- SMILES to verified db2s, stage by stage, with every loss reco
     llb pipeline cancel RUN
 
 Stages, in order (docs/PIPELINE_DESIGN.md):
-    parents  triage  qupkake  merge  names  checks  db2  verify
+    preflight  parents  triage  qupkake  merge  names  checks  db2  verify
+`start` only checks hpc.env and submits: nothing activates an env on the login node.
+preflight, in the first control job, runs `llb doctor` and records each env's versions.
 Inline stages run inside a control job; qupkake, names and db2 are SLURM jobs, each
 followed by a control job (`--dependency=afterany`) that checks the outputs, applies
 the stage's stop threshold and submits the next stage. A task that failed or timed
@@ -17,8 +19,9 @@ out is resubmitted once at twice the time limit; a threshold that is exceeded st
 the run (the control job exits 3, so SLURM mails LLB_MAIL). `resume` re-checks a
 stopped stage after you have looked, optionally with a changed threshold.
 
-Records in RUN: pipeline.json (inputs, settings, versions; written once),
-pipeline/state.json, pipeline/logs/, ledger.tsv, attrition.tsv, REPORT.md.
+Records in RUN: pipeline.json (inputs, settings; written once), pipeline/state.json,
+pipeline/doctor.json and pipeline/versions.json (preflight), pipeline/logs/,
+ledger.tsv, attrition.tsv, REPORT.md.
 
 Stdlib only; each step runs through `llb`, in its own environment.
 """
@@ -43,7 +46,7 @@ from pathlib import Path
 LLB_ROOT = Path(__file__).resolve().parent.parent
 LLB = str(LLB_ROOT / "bin" / "llb")
 
-STAGES = ["parents", "triage", "qupkake", "merge", "names", "checks", "db2", "verify"]
+STAGES = ["preflight", "parents", "triage", "qupkake", "merge", "names", "checks", "db2", "verify"]
 JOB_STAGES = {"qupkake", "names", "db2"}
 
 DEFAULTS = {
@@ -166,6 +169,10 @@ class Run:
         for k, v in DEFAULTS.items():
             self.settings.setdefault(k, json.loads(json.dumps(v)))
         self.state = json.loads((self.pdir / "state.json").read_text())
+        # a run started before the preflight stage (2026-10-20) checked nothing up front
+        # and recorded its versions in pipeline.json at start: nothing to do now
+        self.state["stages"].setdefault("preflight", {
+            "status": "done", "result": {"note": "run started before the preflight stage"}})
         self.runner = runner or Runner(self.path, self.pdir / "logs" / "steps.log")
         # thresholds and times changed by `resume --set` apply from then on
         for o in self.state.get("overrides", []):
@@ -303,6 +310,59 @@ def parents_in(run: Run, parents_dir: str) -> int:
 # ---------------------------------------------------------------------------
 # stages: inline ones run here; job ones have submit() and collect()
 # ---------------------------------------------------------------------------
+DOCTOR_STAGES = "host,prep,pka,qupkake,db2"
+
+
+def read_doctor(run: Run) -> dict | None:
+    try:
+        return json.loads(run.f("pipeline", "doctor.json").read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def do_preflight(run: Run) -> None:
+    """`llb doctor` on this (compute) node, then every env's versions. Always reruns:
+    it takes seconds, and after a fix or a resume it must describe the env as it is now."""
+    s = run.settings
+    run.f("pipeline", "doctor.json").unlink(missing_ok=True)     # never read a stale one
+    rc = run.runner.llb("doctor", "--stage", DOCTOR_STAGES, "--method", s["db2_method"],
+                        "--pbfilter", s["db2_pbfilter"], "--json", "pipeline/doctor.json")
+    if rc:
+        doc = read_doctor(run)
+        host = (doc or {}).get("host") or os.uname().nodename
+        if doc is None:
+            raise Stop("run", f"llb doctor exited {rc} on {host} and wrote no "
+                              f"pipeline/doctor.json (pipeline/logs/steps.log)")
+        fails = [f"FAIL {c['stage']} {c['check']}: {c.get('detail', '')}"
+                 + (f" (fix: {c['fix']})" if c.get("fix") else "")
+                 for c in doc.get("checks", []) if c.get("status") == "FAIL"]
+        raise Stop("run", f"llb doctor failed on {host}: {'; '.join(fails) or f'exit {rc}'}. "
+                          f"Details: pipeline/doctor.json. Fix the environment, then "
+                          f"`llb pipeline resume {run.path}`")
+    # here, not in `start`: on ACES the container runtime exists only on compute nodes
+    vers = versions(run.runner, run.state["cluster"])
+    tmp = run.pdir / "versions.json.tmp"
+    tmp.write_text(json.dumps(vers, indent=2))
+    tmp.replace(run.pdir / "versions.json")
+
+
+def check_preflight(run: Run) -> dict:
+    doc = read_doctor(run)
+    if doc is None or not run.f("pipeline", "versions.json").exists():
+        raise Stop("run", "preflight wrote no pipeline/doctor.json or pipeline/versions.json "
+                          "(pipeline/logs/steps.log)")
+    checks = doc.get("checks", [])
+    warned = [f"{c['stage']} {c['check']}" for c in checks if c.get("status") == "WARN"]
+    return {"host": doc.get("host", ""), "checks": len(checks), "warnings": len(warned),
+            "warned": warned}
+
+
+def run_versions(run: Run) -> dict:
+    """pipeline/versions.json (preflight), or pipeline.json's for a run started before it."""
+    p = run.pdir / "versions.json"
+    return json.loads(p.read_text()) if p.exists() else run.spec.get("versions", {})
+
+
 def do_parents(run: Run) -> None:
     s = run.settings
     if run.f("parents", "shards.tsv.meta").exists():       # finished before an interruption
@@ -606,10 +666,16 @@ def mol2_commands() -> str:
 
 def write_report(run: Run) -> None:
     att = read_tsv(run.f("attrition.tsv"))
+    vers, pre = run_versions(run), run.stage("preflight").get("result", {})
     lines = [f"# Library run {run.name}", "",
              f"Started {run.state['started']}, finished {run.state.get('finished', '')}. "
-             f"LLB at start: {run.spec['versions'].get('llb_commit', '?')[:12]} "
+             f"LLB at start: {vers.get('llb_commit', '?')[:12]} "
              f"(per stage below).", "",
+             "## Preflight", "",
+             (f"`llb doctor` on {pre['host']}: {pre['checks']} checks, none failed, "
+              f"{pre['warnings']} warning(s){': ' + ', '.join(pre['warned']) if pre.get('warned') else ''} "
+              f"(pipeline/doctor.json)." if "checks" in pre else
+              "None: the run started before the preflight stage."), "",
              "## Attrition (molecules, by heavy-atom bin)", "",
              "| " + " | ".join(att[0].keys()) + " |" if att else "",
              "| " + " | ".join("---" for _ in att[0]) + " |" if att else ""]
@@ -627,7 +693,7 @@ def write_report(run: Run) -> None:
         lines += ["", "## Overrides after a stop", ""]
         lines += [f"- {o['at']}: {o['key']} = {o['value']}" for o in run.state["overrides"]]
     lines += ["", "## Settings", "", "```json", json.dumps(run.spec["settings"], indent=2), "```",
-              "", "## Versions", "", "```json", json.dumps(run.spec["versions"], indent=2), "```",
+              "", "## Versions", "", "```json", json.dumps(vers, indent=2), "```",
               "", "## Cost", "", "```", run.f("timing.txt").read_text() if run.f("timing.txt").exists()
               else "(no timing)", "```",
               "", "## Next: the mol2 library", "", "```bash", mol2_commands(), "```", ""]
@@ -637,7 +703,8 @@ def write_report(run: Run) -> None:
 # ---------------------------------------------------------------------------
 # the state machine
 # ---------------------------------------------------------------------------
-INLINE = {"parents": (do_parents, check_parents), "triage": (do_triage, check_triage),
+INLINE = {"preflight": (do_preflight, check_preflight),
+          "parents": (do_parents, check_parents), "triage": (do_triage, check_triage),
           "merge": (do_merge, check_merge), "checks": (do_checks, check_checks),
           "verify": (do_verify, check_verify)}
 SUBMIT = {"qupkake": submit_qupkake, "names": submit_names, "db2": submit_db2}
@@ -777,7 +844,7 @@ def versions(runner: Runner, cluster: dict) -> dict:
 
 
 def create_run(run_dir: Path, smiles: list[str], settings: dict, cluster: dict,
-               vers: dict, runner: Runner | None = None) -> Run:
+               runner: Runner | None = None) -> Run:
     """Write pipeline.json and an all-pending state; return the Run."""
     inputs = [Path(p).resolve() for p in smiles]
     for p in inputs:
@@ -787,7 +854,8 @@ def create_run(run_dir: Path, smiles: list[str], settings: dict, cluster: dict,
     spec = {"created": now(), "inputs": [str(p) for p in smiles],
             "inputs_abs": [str(p) for p in inputs],
             "input_sha256": {str(p): sha256(p) for p in inputs},
-            "settings": settings, "versions": vers,
+            # versions are the preflight stage's (it runs where the envs do)
+            "settings": settings, "versions_file": "pipeline/versions.json",
             "cluster": {k: v for k, v in cluster.items() if k != "LLB_MAIL"}}
     (run_dir / "pipeline.json").write_text(json.dumps(spec, indent=2))
     state = {"started": now(), "cluster": cluster,
@@ -808,17 +876,18 @@ def cmd_start(a) -> int:
         set_setting(settings, k, v)
     (run_dir / "pipeline" / "logs").mkdir(parents=True, exist_ok=True)
     runner = Runner(run_dir, run_dir / "pipeline" / "logs" / "steps.log")
+    # the login node: hpc.env only, no env activation (the preflight stage does that)
     cluster = runner.config()
     if not cluster.get("LLB_ACCOUNT"):
         raise SystemExit("LLB_ACCOUNT is not set in your hpc.env")
-    run = create_run(run_dir, a.smiles, settings, cluster, versions(runner, cluster))
+    run = create_run(run_dir, a.smiles, settings, cluster)
     if a.here:
         with run.lock():
             return advance(run)
     jid = submit_control(run, [], last=False)
     run.state["first_control"] = jid
     run.save()
-    print(f"run {run_dir}: control job {jid} runs parents and triage, then submits the rest.\n"
+    print(f"run {run_dir}: control job {jid} runs preflight (llb doctor), parents and triage, then submits the rest.\n"
           f"follow it with: llb pipeline status {run_dir}")
     return 0
 
@@ -893,7 +962,7 @@ def main(argv=None) -> int:
     p.add_argument("--set", action="append", metavar="KEY=VALUE",
                    help="e.g. qupkake_time=00:45:00, stop.db2=0.08")
     p.add_argument("--here", action="store_true",
-                   help="run the first stages in this shell instead of a control job")
+                   help="run the first stages (preflight too) in this shell instead of a control job")
     p.set_defaults(fn=cmd_start)
     for name, fn, hlp in (("status", cmd_status, "where the run is"),
                           ("advance", cmd_advance, "one step forward (control jobs run this)"),
