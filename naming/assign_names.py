@@ -42,7 +42,10 @@ Enforced here, as in LLB's old names step (tag llb-full-2026-10):
 * stereo closed: re-enumerating any output SMILES (RDKit, tryEmbedding=False)
   gives exactly one isomer, so a name means one structure in pass 2.
 * one structure, one name: a SMILES reached from two parents keeps the first
-  (sorted by parent id), and duplicates within a parent are dropped.
+  (sorted by parent id), and duplicates within a parent are dropped. "Same
+  structure" includes resonance forms: MolSanitizer can emit one cation twice
+  with the charge on different atoms (imidazolium as Cc1c[nH]c[nH+]1 and
+  Cc1c[nH+]c[nH]1), which canonical SMILES does not merge (species_key).
 * one fragment per row (run MolSanitizer with --removesalts if inputs have salts).
 * > 62 states for a parent, or > 62 isomers for a state: dropped and recorded.
 * N-H+ invertomers: MolSanitizer enumerates both N configurations as stereo-
@@ -117,6 +120,17 @@ def stereo_count(mol: Chem.Mol) -> int:
     return len({Chem.MolToSmiles(x) for x in EnumerateStereoisomers(mol, options=STEREO_OPTS)})
 
 
+def species_key(mol: Chem.Mol) -> str:
+    """One string per species: the least canonical SMILES over its resonance forms.
+
+    Merges forms that differ only in where a charge or double bond is drawn;
+    tautomers (an H on a different atom) stay apart.
+    """
+    sup = Chem.ResonanceMolSupplier(mol, Chem.ResonanceFlags.ALLOW_CHARGE_SEPARATION)
+    return min((Chem.MolToSmiles(x) for x in sup if x is not None),
+               default=Chem.MolToSmiles(mol))
+
+
 def invertomer_key(smi: str) -> str:
     """SMILES with the configuration of every N-H+ centre erased.
 
@@ -188,7 +202,7 @@ def main(argv=None) -> int:
 
     # ---- name -----------------------------------------------------------------
     library: list[dict] = []
-    owner: dict[str, str] = {}                  # canonical SMILES -> name
+    owner: dict[str, str] = {}                  # species_key -> name
     counts = Counter()
     for inp in sorted(groups, key=lambda n: pid_of[n]):
         pid = pid_of[inp]
@@ -204,13 +218,13 @@ def main(argv=None) -> int:
                     dropped.append((inp, ms_name, "multiple_fragments", smi)); continue
                 if stereo_count(mol) != 1:
                     dropped.append((inp, ms_name, "stereo_not_closed", smi)); continue
-                can = Chem.MolToSmiles(mol)
-                if can in owner:
+                can, key = Chem.MolToSmiles(mol), species_key(mol)
+                if key in owner:
                     dropped.append((inp, ms_name, "duplicate_structure",
-                                    f"{can} already named {owner[can]}")); continue
-                if any(can == k[0] for k in kept):
+                                    f"{can} already named {owner[key]}")); continue
+                if any(key == k[3] for k in kept):
                     dropped.append((inp, ms_name, "duplicate_structure", can)); continue
-                kept.append((can, mol, ms_name))
+                kept.append((can, mol, ms_name, key))
             if not kept:
                 continue
             if p_new >= len(BASE62):
@@ -220,10 +234,10 @@ def main(argv=None) -> int:
                 dropped.extend((inp, k[2], "too_many_stereoisomers", "> 62") for k in kept[62:])
                 kept = kept[:62]
             first_of: dict[str, str] = {}
-            for s_idx, (can, mol, ms_name) in enumerate(kept):
+            for s_idx, (can, mol, ms_name, key) in enumerate(kept):
                 name = contract_name(base, p_new, s_idx)
                 inv = first_of.setdefault(invertomer_key(can), name)
-                owner[can] = name
+                owner[key] = name
                 library.append({
                     "name": name, "base_id": base, "parent_id": pid,
                     "zinc_id": pid if is_zinc(pid) else "", "input_name": inp,
