@@ -122,7 +122,7 @@ def test_plan_rejects_and_shards(tmp_path=None):
                             "--per-shard", "2"], capture_output=True, text=True)
     assert again.returncode == 0 and "nothing to do" in again.stdout
     other = subprocess.run([sys.executable, str(MSB / "plan.py"), str(tmp / "H18.smi"), "-o", str(run),
-                            "--per-shard", "2", "--pH", "7.4"], capture_output=True, text=True)
+                            "--per-shard", "2", "--pH", "7"], capture_output=True, text=True)
     assert other.returncode != 0
 
 

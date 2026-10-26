@@ -160,8 +160,8 @@ The run passes when:
 Read off: s/name, names/parent, `MaxRSS` (sacct), db2 size, and `n_h_invertomers`.
 
 **Production H18–H30**: 13 bins × 10,000 = 130,000 parents. Until the smoke test
-measures it, assume ~2 names/parent (LLB's median was ~1.9) and 10–60 s per name
-at 2,000 conformers. That brackets 260k names at **~0.7k–4.3k CPU-h**: 2–11 h of
+measures it, assume ~2 names/parent (LLB's median was ~1.9; pH range 1 adds some) and
+10–60 s per name at 600 conformers. That brackets 260k names at **~0.7k–4.3k CPU-h**: 2–11 h of
 wall time at 400 CPUs. db2_converter cost ~50 s/name. Pick `--per-shard` so a task
 takes ~1.5 h:
 
@@ -174,17 +174,19 @@ MaxArraySize, and in one submit. Run them `--parallel 400`, which leaves room
 inside maom_root's 2,000-CPU cap. Set the time limit to 3× the smoke p90 task
 time. Copy the run to Turbo when done (scratch purges after 60 days).
 
-**Docking cost depends on these choices.** MolSanitizer's default is 2,000
-conformers; LLB built ≤ 600. The H18–22 pilot docked at 1.28 s per
-ligand-pocket. More conformers, or more states from `--pH-range 1`, multiply the
-~10⁵ core-h docking bill, not just this step's.
+**Docking cost.** The settings (§6) match LLB's conformer budget (600) and pH
+window, so the H18–22 pilot's 1.28 s per ligand-pocket is the right first guess;
+the smoke run's names per parent is what moves the ~10⁵ core-h docking bill.
 
-## 6. Open choices (defaults are MolSanitizer's published settings)
+## 6. Chemistry settings (John, 2026-10-26)
 
-| option | default | alternative | trade-off |
+| option | set | MolSanitizer default | why |
 | --- | --- | --- | --- |
-| `--pH` / `--pH-range` | 7 / 0 (benchmarked) | 7.4 / 1 (LLB's window) | ±1 adds the imidazole / 2-aminopyridine cations (rule pKa 6) and more names to dock |
-| `--numconfs` | 2,000 | 600 (LLB) | docking time per name |
-| `--max-stereoisomers` | 8 | up to 62 | LLB kept ≤ 32 |
-| `--tautomers` | on | off | the reason to switch (TautoBase 70% vs LLB 5/13 probes) |
-| filters (PAINS, unwanted) | off | on | a training set, not a hit list: off |
+| `--pH` / `--pH-range` | **7.4 / 1** (states at 6.4, 7.4, 8.4, union kept) | 7 / 0 | LLB's window; keeps the imidazole / 2-aminopyridine cations (rule pKa 6) that pH 7 alone drops |
+| `--numconfs` | **600** | 2,000 | LLB built ≤ 600; docking time per name scales with it |
+| `--max-stereoisomers` | **8** | 8 | |
+| `--tautomers` | on | on | the reason for the switch |
+| filters (PAINS, unwanted) | off | off | a training set, not a hit list |
+
+The 2D step takes the non-integer pH through MolSanitizer's Python API (its CLI
+accepts integers only); `ph_values` in library.tsv reads `6.4-8.4`.

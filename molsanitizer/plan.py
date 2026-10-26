@@ -37,20 +37,21 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from naming import parent_id  # noqa: E402
 
-# The chemistry. Defaults are MolSanitizer 0.7.4's own (the settings its paper
-# benchmarks), except where noted. Every value lands in run.json.
+# The chemistry. MolSanitizer 0.7.4's defaults except where noted; pH window,
+# conformer count and stereo cap chosen by John 2026-10-26. Every value lands
+# in run.json.
 DEFAULTS = {
     "removesalts": True,        # paper's recommended prep; ZINC22 2D is one fragment anyway
     "neutralize": True,         # MolSanitizer turns it on with tautomers/protonation
     "tautomers": True,
     "extended_tautomers": False,
     "protonation": True,
-    "pH": 7.0,
-    "pH_range": 0.0,
+    "pH": 7.4,                  # MolSanitizer: 7. LLB's window: 6.4, 7.4, 8.4
+    "pH_range": 1.0,            # MolSanitizer: 0
     "metal": "strict",
     "max_stereoisomers": 8,
     "stereo_timeout": 60,       # s per molecule
-    "numconfs": 2000,
+    "numconfs": 600,            # MolSanitizer: 2000. LLB built <= 600; docking cost scales with it
     "energywindow": 25.0,
     "rmsd": 0.5,
     "nringconfs": 1,
