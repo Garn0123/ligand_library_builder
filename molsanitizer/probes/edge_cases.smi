@@ -1,0 +1,15 @@
+CCN(C)Cc1ccccc1 edge_invertomer_amine
+CC(N)c1ccc2CCN(C)Cc2c1 edge_amine_stereo_and_invertomer
+C1CNCCN1 edge_piperazine
+CN(C)C(=N)N=C(N)N edge_metformin
+c1c[nH]cn1 edge_imidazole
+Oc1ccccn1 edge_2_hydroxypyridine
+CC1(C)OC(=O)CC(=O)O1 edge_meldrums_acid
+NC12CC(C1)C2 edge_bicyclopentane_amine
+C[Se]c1ccccc1 edge_selenoanisole_exotic
+CC(=O)[O-].[Na+] edge_sodium_acetate_removed_whole
+C1CC1C(=O)O(C edge_invalid_smiles
+OC(=O)c1ccccc1 ZINC12345
+OC(=O)c1ccccc1 edge_benzoic_same_structure
+CCCO ZINC12345
+CCO ZINC000012345678.0

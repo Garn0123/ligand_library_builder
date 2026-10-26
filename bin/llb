@@ -111,6 +111,7 @@ case "$step" in
     clash-report)   exec python3 "$Q/clash_report.py" "$@" ;;
     mmff-test)      exec "$W" PREP python "$Q/mmff_variants.py" "$@" ;;
     chunk)          exec "$LLB_ROOT/mol_compiler/parallel/submit_chunks.sh" "$@" ;;
+    msani)          exec "$LLB_ROOT/molsanitizer/msani.sh" "$@" ;;   # MolSanitizer build: llb msani help
     env)            exec "$W" "$@" ;;
     squeeze)        exec awk -f "$LLB_ROOT/common/squeeze_log.awk" ;;
     root)           echo "$LLB_ROOT" ;;

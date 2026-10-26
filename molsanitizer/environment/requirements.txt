@@ -1,0 +1,3 @@
+# Top-level pins. The resolved set is requirements.lock.txt (written by install.sh).
+molsanitizer==0.7.4
+rdkit==2026.3.6
