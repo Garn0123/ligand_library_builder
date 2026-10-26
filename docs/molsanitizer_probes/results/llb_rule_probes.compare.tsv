@@ -1,0 +1,36 @@
+name	llb_rule	expected	llb_route	llb_tautomer_fix	llb_7.4	llb_score	llb_smiles	ms_tautomers	ms_7	ms_7_score	ms_7.4	ms_7.4_score	ms_7.4r1	ms_7.4r1_score	ms_7.4r1_smiles
+piperazine	5.1 coupling (<=3 bonds, same ring)	+1	qupkake (coupled)		+1,+2	exceed	C1C[NH2+]CCN1 C1C[NH2+]CC[NH2+]1	C1CNCCN1	+1	correct	+1	correct	+1	correct	C1C[NH2+]CCN1
+ethylenediamine	5.1 coupling (<=3 bonds)	+1,+2	qupkake (coupled)		+2	incomplete	[NH3+]CC[NH3+]	NCCN	+1	incomplete	+1	incomplete	+1	incomplete	NCC[NH3+]
+dabco	5.1 coupling (<=3 bonds, same ring)	0,+1	qupkake (near_window+coupled)		0,+1	correct	C1C[NH+]2CCN1CC2 C1CN2CCN1CC2	C1CN2CCN1CC2	+1	incomplete	+1	incomplete	+1	incomplete	C1C[NH+]2CCN1CC2
+putrescine	5.1 coupling (5 bonds)	+2	molgpka		+2	correct	[NH3+]CCCC[NH3+]	NCCCCN	+2	correct	+2	correct	+2	correct	[NH3+]CCCC[NH3+]
+benzylamine	baseline amine	+1	qupkake (near_window)		+1	correct	[NH3+]Cc1ccccc1	NCc1ccccc1	+1	correct	+1	correct	+1	correct	[NH3+]Cc1ccccc1
+aniline	baseline aryl amine	0	molgpka		0	correct	Nc1ccccc1	Nc1ccccc1	0	correct	0	correct	0	correct	Nc1ccccc1
+phenylguanidine	4.5 one site per guanidine	+1	molgpka	imino_to_amino	+1	correct	NC(N)=[NH+]c1ccccc1	NC(N)=Nc1ccccc1	+1	correct	+1	correct	+1	correct	NC(N)=[NH+]c1ccccc1
+benzamidine	4.5 one site per amidine	+1	molgpka		+1	correct	NC(=[NH2+])c1ccccc1	N=C(N)c1ccccc1	+1	correct	+1	correct	+1	correct	NC(=[NH2+])c1ccccc1
+metformin	4.5 biguanide	+1	qupkake (near_window)		+1,+2	exceed	CN(C)C(=[NH2+])NC(N)=[NH2+] CN(C)C(=[NH2+])NC(=N)N	CN(C)C(N)=NC(=N)N	+1	correct	+1	correct	+1	correct	CN(C)C(N)=NC(N)=[NH2+]
+acylsulfonamide	4.1b kept acid	-1	molgpka		-1	correct	CS(=O)(=O)[N-]C(=O)CCc1ccccc1	CS(=O)(=O)NC(=O)CCc1ccccc1	-1	correct	-1	correct	-1	correct	CS(=O)(=O)[N-]C(=O)CCc1ccccc1
+sulfonylurea	4.1b kept acid	-1	qupkake (near_window)		-1	correct	CS(=O)(=O)[N-]C(=O)NCc1ccccc1	CS(=O)(=O)NC(=O)NCc1ccccc1	-1	correct	-1	correct	-1	correct	CS(=O)(=O)[N-]C(=O)NCc1ccccc1
+acyl_dimethylsulfamide	4.1b kept acid	-1	qupkake (near_window)		-1	correct	CN(C)S(=O)(=O)[N-]C(=O)CCc1ccccc1	CN(C)S(=O)(=O)NC(=O)CCc1ccccc1	-1	correct	-1	correct	-1	correct	CN(C)S(=O)(=O)[N-]C(=O)CCc1ccccc1
+tolbutamide	4.1b kept acid	-1	qupkake (near_window)		-1	correct	CCCCNC(=O)[N-]S(=O)(=O)c1ccc(C)cc1	CCCCNC(=O)NS(=O)(=O)c1ccc(C)cc1	-1	correct	-1	correct	-1	correct	CCCCNC(=O)[N-]S(=O)(=O)c1ccc(C)cc1
+phenylpropionic_acid	baseline carboxylic acid	-1	molgpka		-1	correct	O=C([O-])CCc1ccccc1	O=C(O)CCc1ccccc1	-1	correct	-1	correct	-1	correct	O=C([O-])CCc1ccccc1
+malonic_acid	5.1 coupling acids (4 bonds); 4.4 no CH acid	-2	molgpka		-2	correct	O=C([O-])CC(=O)[O-]	O=C(O)CC(=O)O	-2	correct	-2	correct	-2	correct	O=C([O-])CC(=O)[O-]
+acetanilide	4.1 amide N-H not acid	0	molgpka		0	correct	CC(=O)Nc1ccccc1	CC(=O)Nc1ccccc1	0	correct	0	correct	0	correct	CC(=O)Nc1ccccc1
+phenylurea	4.1 urea N-H not acid	0	molgpka		0	correct	NC(=O)Nc1ccccc1	NC(=O)Nc1ccccc1	0	correct	0	correct	0	correct	NC(=O)Nc1ccccc1
+ethyl_phenylcarbamate	4.1 carbamate N-H not acid	0	molgpka		0	correct	CCOC(=O)Nc1ccccc1	CCOC(=O)Nc1ccccc1	0	correct	0	correct	0	correct	CCOC(=O)Nc1ccccc1
+benzamide	4.1 amide N not base	0	molgpka		0	correct	NC(=O)c1ccccc1	NC(=O)c1ccccc1	0	correct	0	correct	0	correct	NC(=O)c1ccccc1
+phthalimide	4.1 imide N-H kept	-1,0	molgpka		0	incomplete	O=C1NC(=O)c2ccccc21	O=C1NC(=O)c2ccccc21	0	incomplete	0	incomplete	0	incomplete	O=C1NC(=O)c2ccccc21
+meldrums_acid	4.4 known miss (doubly ester CH)	-1	molgpka		0	incorrect	CC1(C)OC(=O)CC(=O)O1	CC1(C)OC(=O)CC(=O)O1	-1	correct	-1	correct	-1	correct	CC1(C)OC(=O)[CH-]C(=O)O1
+dimedone	4.4 1,3-diketone CH kept	-1	qupkake (near_window)		-1	correct	CC1(C)CC(=O)[CH-]C(=O)C1	CC1(C)CC(=O)C=C(O)C1	-1	correct	-1	correct	-1	correct	CC1(C)CC(=O)C=C([O-])C1
+acetylacetone	4.4 1,3-diketone CH kept	0	qupkake (near_window)		0	correct	CC(=O)CC(C)=O	CC(=O)CC(C)=O	0	correct	0	correct	0	correct	CC(=O)CC(C)=O
+nitroethane	4.4 nitro CH kept	0	molgpka		0	correct	CC[N+](=O)[O-]	CC[N+](=O)[O-]	0	correct	0	correct	0	correct	CC[N+](=O)[O-]
+diethyl_malonate	4.4 ester CH dropped	0	molgpka		0	correct	CCOC(=O)CC(=O)OCC	CCOC(=O)CC(=O)OCC	0	correct	0	correct	0	correct	CCOC(=O)CC(=O)OCC
+thioanisole	4.6 S never a base	0	molgpka		0	correct	CSc1ccccc1	CSc1ccccc1	0	correct	0	correct	0	correct	CSc1ccccc1
+tetrahydrothiophene	4.6 S never a base	0	molgpka		0	correct	C1CCSC1	C1CCSC1	0	correct	0	correct	0	correct	C1CCSC1
+propyl_azide	4.6 azide never a base	0	molgpka		0	correct	CCCN=[N+]=[N-]	CCCN=[N+]=[N-]	0	correct	0	correct	0	correct	CCCN=[N+]=[N-]
+phenol	4.3 phenol kept	0	molgpka		0	correct	Oc1ccccc1	Oc1ccccc1	0	correct	0	correct	0	correct	Oc1ccccc1
+p_nitrophenol	4.3 phenol kept	-1,0	qupkake (near_window)		-1,0	correct	O=[N+]([O-])c1ccc([O-])cc1 O=[N+]([O-])c1ccc(O)cc1	O=[N+]([O-])c1ccc(O)cc1	0	incomplete	0	incomplete	-1,0	correct	O=[N+]([O-])c1ccc(O)cc1 O=[N+]([O-])c1ccc([O-])cc1
+benzyl_alcohol	4.3 alcohol never acid	0	molgpka		0	correct	OCc1ccccc1	OCc1ccccc1	0	correct	0	correct	0	correct	OCc1ccccc1
+2-aminopyridine_imino	2.2 imino->amino	0,+1	qupkake (near_window)	imino_to_amino	0,+1	correct	Nc1ccccn1 Nc1cccc[nH+]1	Nc1ccccn1	0	incomplete	0	incomplete	0	incomplete	Nc1ccccn1
+2-aminothiazole_imino	2.2 imino->amino	0	qupkake (near_window)	imino_to_amino	0	correct	Nc1nccs1	Nc1nccs1	0	correct	0	correct	0	correct	Nc1nccs1
+4-aminopyridine_imino	2.2 imino->amino	+1	qupkake (near_window)	imino_to_amino	0,+1	exceed	Nc1ccncc1 Nc1cc[nH+]cc1	Nc1ccncc1	+1	correct	+1	correct	+1	correct	Nc1cc[nH+]cc1
+carbamate_imidic_acid	2.3 imidic acid->amide	0	molgpka	imino_to_amino	0	correct	CCOC(N)=O	CCOC(N)=O	0	correct	0	correct	0	correct	CCOC(N)=O

@@ -1,0 +1,14 @@
+name	expected	llb	llb_score	msani	msani_score
+2-hydroxypyridine	O=c1cccc[nH]1	Oc1ccccn1	incorrect	O=c1cccc[nH]1	correct
+4-hydroxypyridine	O=c1cc[nH]cc1	Oc1ccncc1	incorrect	O=c1cc[nH]cc1	correct
+2-quinolinol	O=c1ccc2ccccc2[nH]1	Oc1ccc2ccccc2n1	incorrect	O=c1ccc2ccccc2[nH]1	correct
+uracil_dienol	O=c1cc[nH]c(=O)[nH]1	Oc1ccnc(O)n1	incorrect	O=c1cc[nH]c(=O)[nH]1	correct
+cytosine_imino	Nc1cc[nH]c(=O)n1	Nc1cc[nH]c(=O)n1	correct	Nc1cc[nH]c(=O)n1	correct
+acyclovir_3H	Nc1nc2c(ncn2COCCO)c(=O)[nH]1	Nc1nc(=O)c2ncn(COCCO)c2[nH]1	incorrect	Nc1nc2c(ncn2COCCO)c(=O)[nH]1	correct
+2-mercaptopyridine	S=c1cccc[nH]1	Sc1ccccn1	incorrect	S=c1cccc[nH]1	correct
+2-aminopyridine_imino	Nc1ccccn1	Nc1ccccn1	correct	Nc1ccccn1	correct
+2-aminothiazole_imino	Nc1nccs1	Nc1nccs1	correct	Nc1nccs1	correct
+carbamate_imidic_acid	CCOC(N)=O	CCOC(N)=O	correct	CCOC(N)=O	correct
+cyclohexadienone	Oc1ccccc1	O=C1C=CCC=C1	incorrect	Oc1ccccc1	correct
+catechol_keto	Oc1ccccc1O	O=C1CC=CC=C1O	incorrect	Oc1ccccc1O	correct
+acetamide_imidic	CC(N)=O	CC(N)=O	correct	CC(N)=O	correct

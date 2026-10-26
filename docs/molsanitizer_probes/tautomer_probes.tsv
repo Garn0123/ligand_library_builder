@@ -1,0 +1,14 @@
+name	input_smiles	expected_smiles	note
+2-hydroxypyridine	Oc1ccccn1	O=c1cccc[nH]1	2-pyridone dominates in water (Katritzky 1991 review)
+4-hydroxypyridine	Oc1ccncc1	O=c1cc[nH]cc1	4-pyridone dominates in water
+2-quinolinol	Oc1ccc2ccccc2n1	O=c1ccc2ccccc2[nH]1	carbostyril (lactam)
+uracil_dienol	Oc1ccnc(O)n1	O=c1cc[nH]c(=O)[nH]1	diketo
+cytosine_imino	N=c1cc[nH]c(=O)[nH]1	Nc1cc[nH]c(=O)n1	amino-oxo (1H)
+acyclovir_3H	Nc1nc(=O)c2ncn(COCCO)c2[nH]1	Nc1nc2c(ncn2COCCO)c(=O)[nH]1	MolSanitizer Fig. 6B: 1H form from CSD 1122548 (input = the 3H form)
+2-mercaptopyridine	Sc1ccccn1	S=c1cccc[nH]1	thione dominates in water
+2-aminopyridine_imino	N=c1cccc[nH]1	Nc1ccccn1	LLB rule 2.2
+2-aminothiazole_imino	N=c1scc[nH]1	Nc1nccs1	LLB rule 2.2
+carbamate_imidic_acid	CCOC(=N)O	CCOC(N)=O	LLB rule 2.3
+cyclohexadienone	O=C1C=CCC=C1	Oc1ccccc1	phenol (aromatization)
+catechol_keto	OC1=CC=CCC1=O	Oc1ccccc1O	catechol (aromatization; stands in for MolSanitizer Fig. 6C apomorphine)
+acetamide_imidic	CC(O)=N	CC(N)=O	amide
