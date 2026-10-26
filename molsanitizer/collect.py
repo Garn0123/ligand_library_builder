@@ -97,7 +97,10 @@ def reason_key(reason: str) -> str:
     """'pass1: removed_in_pass1: organic salt' -> 'pass1: removed_in_pass1' (first cause only)."""
     first = reason.split(" | ")[0]
     parts = [x.strip() for x in first.split(":")]
-    return ": ".join(parts[:2]).split(" x")[0] if len(parts) > 1 else first
+    if len(parts) < 2:
+        return first
+    # 'duplicate_parent_id (first: gidx 50)' -> 'duplicate_parent_id'; 'x2' counts dropped
+    return f"{parts[0]}: {parts[1].split(' (')[0].split(' x')[0]}"
 
 
 def stack(d: dict) -> str:

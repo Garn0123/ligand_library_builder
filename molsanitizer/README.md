@@ -161,22 +161,31 @@ The run passes when:
 
 Read off: s/parent (pass 1), s/name (pass 2), names/parent, `MaxRSS` (sacct), db2 size, and `n_h_invertomers`.
 
-**Production H18–H30**: 13 bins × 10,000 = 130,000 parents. Until the smoke test
-measures it, assume ~2 names/parent (LLB's median was ~1.9; pH range 1 adds some) and
-10–60 s per name at 600 conformers. That brackets 260k names at **~0.7k–4.3k CPU-h**: 5–31 h of
-wall time at 140 CPUs. db2_converter cost ~50 s/name. Pass 1 is ~seconds per
-parent: 500 parents per task, ~260 tasks, under an hour. `llb names` over the
-union is one job (srun, a few minutes). Pass 2 carries the cost. Pick its
-`--per-shard` (names per task) so a task takes ~1.5 h:
+**Smoke result (Lighthouse, 2026-10-26; 54 lines, 3 per bin H18–H30 + edge cases).**
+All 54 lines are accounted for: 48 built, and the 6 failures are exactly the
+designed ones (EXOTIC Se, salt removed, invalid SMILES, damaged id, repeated id,
+duplicate structure). `validate_names.py` passes. 6 N-H⁺ invertomer pairs are
+linked. 71/72 names verified OK, at **1.48 OK names per built parent**.
 
-```
-per_shard ≈ 5400 / seconds_per_name      # e.g. 5400/30 = 180 names -> ~1,450 tasks for 260k names
-```
+| measure | value |
+| --- | --- |
+| pass 1 | 0.024 s/parent median, p90 0.15 |
+| pass 2 | 3.2 s/name median, p90 6.3, max 12.3 |
+| db2.gz | median 183 KB per name, 2 records |
+| CPU-h | 1.9 per 1,000 parents, task overhead included |
 
-`submit` checks the cluster's MaxArraySize and refuses more than 4,500 tasks in one
-call. Run it with `--parallel 140` (the default; the cap is 149). Set
-the time limit to 3× the smoke run's slowest pass-2 task. Copy the run to Turbo
-when done (scratch purges after 60 days).
+**Production H18–H30**: 13 bins × 10,000 = 130,000 parents.
+
+- **Names:** ~190k.
+- **CPU:** ~250 CPU-h, about 2 h of wall time at 140 CPUs.
+- **db2:** ~35–45 GB.
+- **Pass 1:** 500 parents per task, ~260 tasks of seconds each.
+- **Pass 2:** `--per-shard 500` names per task, ~385 tasks of ~30 min. Use
+  `--time 04:00:00`, which leaves room for the larger H28–30 molecules.
+
+Everything fits under MaxArraySize 5,000 (Lighthouse) in one submit per pass.
+Copy the run to Turbo when done: scratch purges, and Great Lakes docking reads
+it from Turbo.
 
 **Docking cost.** The settings (§6) match LLB's conformer budget (600) and pH
 window, so the H18–22 pilot's 1.28 s per ligand-pocket is the right first guess;
