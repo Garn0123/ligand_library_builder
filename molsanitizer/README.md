@@ -11,6 +11,9 @@ doi:10.26434/chemrxiv.15010189/v1; github.com/carlssonlab/MolSanitizer at
 `de79803`, PyPI 0.7.4. For the paper summary and the comparison with LLB, see
 `docs/MOLSANITIZER_COMPARISON.md` on branch `claude/molsanitizer-comparison-b31000`.
 
+Great Lakes commands (install, selftest, smoke, DOCK6 preflight, production) are in
+the runsheet: https://claude.ai/artifact/V7yUdTvymyZheaapV3LnKk
+
 ## 1. What MolSanitizer needs and produces
 
 | | |
