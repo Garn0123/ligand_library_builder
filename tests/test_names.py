@@ -40,6 +40,8 @@ C[C@]1(c2ccccc2)NC(=O)NC1=O ZINCaa000011uv12.1
 C[C@@]1(c2ccccc2)NC(=O)NC1=O ZINCaa000011uv12.2
 Cc1c[nH]c[nH+]1 ZINCaa000006kl12_1
 Cc1c[nH]cn1 ZINCaa000006kl12_2
+Cc1c[nH+]c[nH]1 ZINCaa000006kl12_3
+Cc1cnc[nH]1 ZINCaa000006kl12_4
 CC(=O)CC(C)=O ZINCaa000009qr78
 C1=CC=CC=1 weird_name_1.2
 C.CC ZINCaa000016ef56
@@ -116,8 +118,11 @@ def test_drops_are_recorded_with_a_reason(library):
     assert dropped["ZINCaa000020mn34"] == "duplicate_structure"     # same SMILES, later parent id
     assert rows["ZINCaa000017gh78"]["smiles"] == "CCO"
     assert dropped["ZINCzz999999zz99"] == "unknown_input_name"
+    # _3 is _1's imidazolium with the + drawn on the other N: one species, one name
+    assert "ZINCaa000006kl12_3" not in rows
+    assert rows["ZINCaa000006kl12_4"]["name"] == "Caa000006kl1220C"   # a real tautomer
     assert dropped["ZINCaa000019kl12"] == "not_returned_by_molsanitizer"
-    assert stats["inputs"] == 11 and stats["names"] == len(rows) == 15
+    assert stats["inputs"] == 11 and stats["names"] == len(rows) == 16
     assert stats["n_h_invertomers"] == 2
 
 

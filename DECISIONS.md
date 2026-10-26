@@ -801,6 +801,48 @@ for the minority that were not.
   loses the front of the name.
 - **Status.** judgment (design), enforced mechanically.
 
+### 8.2 From 2026-10-26 the state character counts MolSanitizer's states, tautomers included
+
+- **Decision.** For libraries built through MolSanitizer, the 14th character of a
+  contract name (`<protomer>` in 8.1) counts MolSanitizer's *states* of a
+  parent: every tautomer × protonation state its pass 1 emits (`--tautomers --protonation`), numbered together as MolSanitizer
+  numbers them (`INPUT_1`, `INPUT_2`, …), renumbered from 0. In `lib_h18_22` and
+  every earlier library it counted protonation states only, since LLB kept ZINC's
+  tautomer (2.2). The 15th character is unchanged: stereoisomers of one state,
+  from 0. The column keeps its name, `protomer_index`, so `docking/` and DRAP read
+  old and new libraries alike; `site_source` (`molsanitizer`) and `ms_name`
+  (MolSanitizer's own name for the row) say which meaning a row has. Two states
+  that are one species drawn differently (resonance forms: the charge on another
+  atom) get one name; the later is dropped as `duplicate_structure`.
+- **Governs.** `naming/assign_names.py` (`llb names`), which reads MolSanitizer's
+  `INPUT_state.stereo` names between its two passes; `naming/llb_ids.py`
+  (base ids, rules unchanged from 8.1).
+- **Commits.** `7cf0441`, `fdaf952` (one name per resonance species).
+- **Evidence.** MolSanitizer 0.7.4 on a laptop (2026-10-26): with
+  `--tautomers --protonation --pH 6 --pH_range 1 --stereoisomers` it names output
+  `ZINCaa000006kl12_1` … `_4` for four states of 4-methylimidazole: the two
+  neutral tautomers, and the imidazolium cation twice (`Cc1c[nH]c[nH+]1` and
+  `Cc1c[nH+]c[nH]1`, one ion with the + drawn on either N, which RDKit's
+  canonical SMILES does not merge; `llb names` keeps three, using the least
+  SMILES over RDKit's resonance forms as the identity), `ZINCaa000013yz56_2.3`
+  for state 2, stereoisomer 3, and leaves out a suffix when there is only one. Its pass 2
+  (`--no-neutralize --no-stereoisomers --gen3d -f db2`) on the renamed SMILES kept
+  every contract name intact on the db2 `M` line, one db2 per name. MolSanitizer's
+  own db2 writer keeps only the last 16 characters of a name (run 2026-10-20,
+  `docs/MOLSANITIZER_COMPARISON.md`), and a ZINC22 id is already 16, which is
+  why naming sits between the passes. N-H+ invertomers come out of pass 1 as
+  separate stereoisomers, so `invertomer_of` (10.1) is set as before.
+- **Alternatives.** *A separate tautomer character:* no room. The name is fixed
+  at 16 characters (8.1) and the base id needs its 12. *Keep `protomer` meaning
+  protonation only, by grouping MolSanitizer's states by tautomer and numbering
+  within:* MolSanitizer does not say which of its states share a tautomer, and
+  recovering it (comparing structures with charges removed) would be our
+  guess at its output. A name's job is to be unique and to survive the db2;
+  what a state *is* lives in `library.tsv`'s SMILES. *Name in one pass and let
+  MolSanitizer's suffixes stand:* truncated in the db2 (above).
+- **Status.** judgment (design), enforced mechanically; measured on a handful of
+  molecules, not yet on a production library.
+
 ---
 
 ## 9. db2 build
