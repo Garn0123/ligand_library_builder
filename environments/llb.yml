@@ -1,0 +1,27 @@
+# llb -- the one conda env this repo defines: the PREP env in hpc.env.
+#
+#   mamba env create -p /nfs/turbo/umms-maom/johnbick/opt/envs/llb -f environments/llb.yml
+#
+# then in hpc.env:  PREP_ENV=/nfs/turbo/.../envs/llb
+#
+# Used by: llb mol2-library (RDKit), llb collapse-invertomers (pandas; pyarrow
+# for .parquet), the zinc3d steps, and the test suite (tests/, mol_compiler/tests).
+# Download, sampling and chunking are stdlib Python and need no env.
+#
+# Pins:
+#   rdkit 2024.03.5  the version lib_h18_22 was built with (DECISIONS.md), so
+#                    mol2-library computes the same descriptors on old libraries
+#   python 3.11      rdkit 2024.03.5 has no 3.13 build
+#   numpy<2          as in the old llb_pka env this replaces
+# The construction envs (qupkake, db2_converter, llb_pka) and their lockfiles are
+# at tag llb-full-2026-10.
+name: llb
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - rdkit=2024.03.5
+  - numpy<2
+  - pandas
+  - pyarrow
+  - pytest

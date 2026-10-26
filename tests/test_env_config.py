@@ -8,8 +8,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-SHOW = ("LLB_CONFIG", "LLB_SITE", "LLB_USER_CONFIG", "LLB_ACCOUNT", "LLB_MAIL",
-        "ZBH_DIR", "ZBH_LICENSE")
+SHOW = ("LLB_CONFIG", "LLB_SITE", "LLB_USER_CONFIG", "LLB_ACCOUNT", "ZINC_DATA")
 
 
 @pytest.fixture
@@ -43,15 +42,14 @@ def load(site, **env):
 
 
 def test_site_hpc_env_beside_the_checkout_wins(site):
-    write(site / "hpc.env", "LLB_ACCOUNT=site_acct\nZBH_DIR=$LLB_SITE/zbh\n")
+    write(site / "hpc.env", "LLB_ACCOUNT=site_acct\nZINC_DATA=$LLB_SITE/zinc\n")
     write(site / "ligand_library_builder/config/hpc.env", "LLB_ACCOUNT=old_acct\n")
     rc, got, err = load(site)
     assert rc == 0, err
     assert got["LLB_ACCOUNT"] == "site_acct"
     assert Path(got["LLB_CONFIG"]).resolve() == (site / "hpc.env").resolve()
     assert got["LLB_SITE"] == str(site)
-    assert got["ZBH_DIR"] == f"{site}/zbh"                    # hpc.env can use $LLB_SITE
-    assert got["ZBH_LICENSE"] == f"{site}/licenses/tester/ZBH"   # the site default
+    assert got["ZINC_DATA"] == f"{site}/zinc"                 # hpc.env can use $LLB_SITE
     assert got["LLB_USER_CONFIG"] == ""
 
 
@@ -60,7 +58,7 @@ def test_old_config_hpc_env_still_works(site):
     rc, got, err = load(site)
     assert rc == 0, err
     assert got["LLB_ACCOUNT"] == "old_acct" and got["LLB_CONFIG"] == str(cfg)
-    assert got["LLB_SITE"] == "" and got["ZBH_LICENSE"] == ""
+    assert got["LLB_SITE"] == ""
 
 
 def test_llb_config_overrides_both(site, tmp_path):
@@ -80,14 +78,13 @@ def test_inherited_llb_config_keeps_llb_site(site):
 
 
 def test_user_file_overrides_the_site(site):
-    write(site / "hpc.env", "LLB_ACCOUNT=site_acct\nLLB_MAIL=\nZBH_LICENSE=\n")
+    write(site / "hpc.env", "LLB_ACCOUNT=site_acct\nZINC_DATA=/site/zinc\n")
     user = write(site / "users/tester.env",
-                 "LLB_ACCOUNT=my_acct\nLLB_MAIL=me@example.org\nZBH_LICENSE=/home/tester/ZBH\n")
+                 "LLB_ACCOUNT=my_acct\nZINC_DATA=/scratch/tester/zinc\n")
     write(site / "users/someone_else.env", "LLB_ACCOUNT=not_mine\n")
     rc, got, err = load(site)
     assert rc == 0, err
-    assert got["LLB_ACCOUNT"] == "my_acct" and got["LLB_MAIL"] == "me@example.org"
-    assert got["ZBH_LICENSE"] == "/home/tester/ZBH"                # not the site default
+    assert got["LLB_ACCOUNT"] == "my_acct" and got["ZINC_DATA"] == "/scratch/tester/zinc"
     assert Path(got["LLB_USER_CONFIG"]).resolve() == user.resolve()
 
 

@@ -29,7 +29,7 @@ What this wrapper adds to tomol2:
     library name must come out. Exit 1 otherwise.
 
 Usage (db2tool from config/hpc.env via common/with_env.sh DOCK):
-    common/with_env.sh DOCK python3 run_qupkake/db2_to_mol2.py build/ \\
+    common/with_env.sh DOCK python3 docking/db2_to_mol2.py build/ \\
         --library library/library.tsv -o library/library.mol2
 
     inputs: .db2.gz / .db2 files, or directories searched for them

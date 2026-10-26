@@ -1,4 +1,0 @@
-# The BCL tarball (oras pull, see container/README.md) and the CI marker
-# ALLOW_MISSING_BCL land here. Nothing in this directory is committed but this file.
-*
-!.gitignore

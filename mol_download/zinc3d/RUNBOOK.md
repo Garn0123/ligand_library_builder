@@ -102,9 +102,9 @@ Assumptions behind the columns:
 
 ```bash
 # config/hpc.env (or $LLB_CONFIG): the account is maom2 since 2026-10-16
-grep -E '^(LLB_ACCOUNT|LLB_PARTITION|WGET|PARALLEL|PREP_ENV|QUPKAKE_ENV)=' $(llb root)/config/hpc.env
+grep -E '^(LLB_ACCOUNT|LLB_PARTITION|WGET|PARALLEL|PREP_ENV)=' $(llb root)/config/hpc.env
 #   LLB_ACCOUNT=maom2    WGET=wget    PARALLEL=parallel
-#   PREP_ENV (or, if empty, QUPKAKE_ENV) needs python >= 3.8; the scripts are stdlib only
+#   PREP_ENV needs python >= 3.8; the scripts are stdlib only
 
 # compute nodes must reach files.docking.org (fetch.sbatch checks again)
 srun -A maom2 -p standard -t 5 curl -sI https://files.docking.org/zinc22/ | head -1
