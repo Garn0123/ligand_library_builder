@@ -54,9 +54,9 @@ counts all_broken / some_broken per molecule.
 
 `mol2_library.py` writes DOCK's header block (name, molecular weight, formal
 charge, H-bond acceptors/donors and heavy atoms computed DOCK's way) plus `LLB_`
-lines taken from `--library`. That file is the `library.tsv` LLB's names step
-wrote, so `mol2-library` works on libraries built before 2026-10-26 as it is.
-For a MolSanitizer library it needs a `library.tsv` with the same columns.
+lines taken from `--library`, the `library.tsv` that `llb names` writes. It has the
+columns LLB's own construction stages wrote before 2026-10-26, plus `ms_name`
+(MolSanitizer's own name for the row), so old and new libraries read the same.
 
 ## Invertomer collapse, after docking
 
@@ -65,7 +65,8 @@ llb collapse-invertomers scores.parquet --library library.tsv -o scores_collapse
 ```
 
 A protonated amine's N-H+ configuration is fixed in a db2, so both invertomers
-were named and docked. This keeps the best score per group, per target, and
-writes which member won (`<out stem>.invertomers.tsv`). It needs the
-`invertomer_of` column of LLB's `library.tsv`. DRAP's
+are named and docked: MolSanitizer enumerates them as stereoisomers, and its
+db2 pass builds each named SMILES as its own db2. This keeps the best score per
+group, per target, and writes which member won (`<out stem>.invertomers.tsv`). It needs the
+`invertomer_of` column of `library.tsv` (`llb names`). DRAP's
 `stage4/collapse_invertomers.py` is the streaming port used at matrix scale.

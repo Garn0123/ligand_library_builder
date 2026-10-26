@@ -63,7 +63,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("scores", type=Path)
-    ap.add_argument("--library", type=Path, required=True, help="library.tsv from LLB's names step (tag llb-full-2026-10)")
+    ap.add_argument("--library", type=Path, required=True, help="library.tsv from llb names")
     ap.add_argument("-o", "--out", type=Path, required=True)
     ap.add_argument("--long", default=None, metavar="NAME,TARGET,SCORE",
                     help="long input: the name, target and score columns")

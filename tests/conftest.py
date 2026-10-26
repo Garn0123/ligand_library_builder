@@ -1,4 +1,4 @@
-"""Shared setup for the tests of the kept tools (docking/, common/env.sh).
+"""Shared setup for the tests of the kept tools (naming/, docking/, common/env.sh).
 
     pytest                       # from the repo root; mol_compiler/ has its own suite
 
@@ -11,4 +11,5 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "docking"))
+for sub in ("docking", "naming"):
+    sys.path.insert(0, str(ROOT / sub))

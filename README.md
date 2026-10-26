@@ -3,17 +3,20 @@
 The two ends of building a small-molecule docking library: choosing molecules
 from ZINC22, and turning finished db2 files into docking jobs. The middle step,
 building DOCK-ready db2s from SMILES, is MolSanitizer's job (Carlsson lab;
-set up under `molsanitizer/`).
+set up under `molsanitizer/`). LLB names its output: `llb names` turns
+MolSanitizer's states and stereoisomers into 16-character contract names
+between MolSanitizer's two passes.
 
 ```
 ZINC download  ->  sample bins  ->  MolSanitizer (see molsanitizer/)  ->  docking jobs
-llb fetch          llb sample       SMILES -> protonated, 3D, db2         llb chunk / llb mol2
+llb fetch          llb sample       pass 1 -> llb names -> pass 2         llb chunk / llb mol2
 ```
 
 ```
 bin/llb         one command for every step; put bin/ on PATH and run from any run directory
 mol_download/   ZINC22 tranches: fetch (run.sh), verify, and sample by heavy-atom bin;
                 zinc3d/: ZINC22's own 3D db2s for a list of ZINC ids
+naming/         llb names: MolSanitizer output -> contract names, library.tsv
 mol_compiler/   db2 -> load-balanced chunks + manifest, the unit of work for docking
 docking/        mol2 from a db2, DOCK-header mol2 shards, invertomer collapse after docking
 common/         env.sh / with_env.sh: activate each tool the way hpc.env says
@@ -62,7 +65,7 @@ politely, and the gotchas that actually happened),
 
 ## Tests
 
-    python -m pytest                          # tests/: docking/ tools, hpc.env lookup
+    python -m pytest                          # tests/: naming, docking/ tools, hpc.env lookup
     (cd mol_compiler && python -m pytest)     # chunking
 
 Run them in the `llb` env. GitHub Actions runs both on every push

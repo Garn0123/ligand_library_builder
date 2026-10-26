@@ -4,7 +4,7 @@
 #
 # then in hpc.env:  PREP_ENV=/nfs/turbo/.../envs/llb
 #
-# Used by: llb mol2-library (RDKit), llb collapse-invertomers (pandas; pyarrow
+# Used by: llb names and llb mol2-library (RDKit), llb collapse-invertomers (pandas; pyarrow
 # for .parquet), the zinc3d steps, and the test suite (tests/, mol_compiler/tests).
 # Download, sampling and chunking are stdlib Python and need no env.
 #

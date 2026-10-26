@@ -2,7 +2,7 @@
 
 | spec | used by |
 | --- | --- |
-| `llb.yml` | `PREP` in `hpc.env`: `llb mol2-library`, `llb collapse-invertomers`, the `zinc3d-*` steps, and the tests |
+| `llb.yml` | `PREP` in `hpc.env`: `llb names`, `llb mol2-library`, `llb collapse-invertomers`, the `zinc3d-*` steps, and the tests |
 
 `llb mol2` runs in `DOCK`, which is not a conda env: it is `db2tool` from
 dock6_claude, loaded by `DOCK_SETUP` (see `config/hpc.env.example`). Download,

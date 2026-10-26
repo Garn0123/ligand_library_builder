@@ -31,7 +31,11 @@
 #   llb zinc3d-extract PLAN OUT [opts]   SLURM array: wanted records -> db2.gz
 #   llb zinc3d-collect ARGS   merge records/ after the array; check nothing lost (PREP)
 #
-# Ligand construction (SMILES -> db2) is MolSanitizer's: see molsanitizer/.
+# Ligand construction (SMILES -> db2) is MolSanitizer's (molsanitizer/), in two passes
+# with the naming step between them (UPSTREAM.md section 2):
+#   llb names --inputs SMI... --ms CLEAN_SMI... -o library
+#                             MolSanitizer's NAME_state.stereo -> 16-character contract
+#                             names, library.smi + library.tsv, naming/assign_names.py (PREP)
 #
 # Docking jobs and after (docking/README.md):
 #   llb chunk RUNDIR DB2DIR [opts]  mol_compiler/parallel/submit_chunks.sh  (no env)
@@ -78,6 +82,7 @@ case "$step" in
     zinc3d-fetch)   exec "$D/zinc3d/submit_fetch.sh" "$@" ;;
     zinc3d-extract) exec "$D/zinc3d/submit_extract.sh" "$@" ;;
     zinc3d-collect) exec "$W" PREP python "$D/zinc3d/extract.py" --collect "$@" ;;
+    names)          exec "$W" PREP python "$LLB_ROOT/naming/assign_names.py" "$@" ;;
     chunk)          exec "$LLB_ROOT/mol_compiler/parallel/submit_chunks.sh" "$@" ;;
     mol2)           exec "$W" DOCK python3 "$K/db2_to_mol2.py" "$@" ;;
     mol2-library)   exec "$W" PREP python "$K/mol2_library.py" "$@" ;;

@@ -6,15 +6,17 @@ than surfacing as a wrong row in the matrix.
 
 ```
 llb fetch + llb sample     ZINC22 2D on disk, N per heavy-atom bin   samples/H*.smi
-MolSanitizer               SMILES -> protonated 3D -> db2            see molsanitizer/
+MolSanitizer pass 1        tautomers, protonation, stereo (SMILES)   *_clean.smi
+llb names                  contract names                            library/library.smi, .tsv
+MolSanitizer pass 2        3D -> db2, names kept                     db2/<name>.db2
 llb chunk                  db2 -> balanced chunks + manifest         docking input
 llb mol2 / mol2-library    mol2 read back out of the db2 (optional)  mol2 docking input
   ... docking (rna_pipeline pipeline/library_docking/) ...
 llb collapse-invertomers   best score per N-H+ invertomer group      score table
 ```
 
-Building the ligands (protonation, tautomers, names, conformers, db2) is not
-done here any more. LLB's own construction stages (MolGpKa triage, QupKake,
+Choosing protonation states, tautomers and stereoisomers, and building
+conformers and db2s, is MolSanitizer's job. Naming stays here. LLB's own construction stages (MolGpKa triage, QupKake,
 contract names, db2_converter, `llb pipeline`) are at tag `llb-full-2026-10`;
 [DECISIONS.md](DECISIONS.md) records why each choice was made for `lib_h18_22`.
 
@@ -59,6 +61,7 @@ Every output path is relative to where you run it, and SLURM logs go to
 | URL list | `llb print-urls` / `llb extract-urls` | `mol_download/sample_2d.py` / `extract_urls.sh` |
 | download | `llb fetch`, `llb fetch-verify`, `llb fetch-status` | `mol_download/run.sh`, `verify.sh`, `status.sh` |
 | sample | `llb sample` | `mol_download/sample_2d.py` |
+| names | `llb names` | `naming/assign_names.py` |
 | ZINC 3D db2s | `llb zinc3d-*` | `mol_download/zinc3d/` (its `RUNBOOK.md`) |
 | chunk | `llb chunk` | `mol_compiler/parallel/submit_chunks.sh` → `submit.slurm` |
 | mol2 | `llb mol2`, `llb mol2-library` | `docking/db2_to_mol2.py`, `docking/mol2_library.py` |
@@ -107,12 +110,45 @@ equally likely, the logP mix right by construction, about 30 min for H28. With
 prove the plumbing end to end, never for results.
 
 
-## 2. Build the ligands: MolSanitizer
+## 2. Build the ligands: MolSanitizer, named in between
 
 `samples/H*.smi` (one `SMILES ZINC_ID` per line, one file per heavy-atom bin)
-is MolSanitizer's input. How to run it on Great Lakes, and what it writes, is
-in `molsanitizer/`. Its output is one or more `.db2.gz` files, which the next
-steps take as they are.
+is MolSanitizer's input. How to run it on Great Lakes is in `molsanitizer/`.
+It runs in **two passes with `llb names` between them**, because a db2 keeps
+only the last 16 characters of a name and a ZINC22 id is already 16: run in
+one pass, `ZINCaa000013yz56_2.3` would lose its prefix inside the db2.
+
+```bash
+# pass 1: chemistry only, SMILES out (one *_clean.smi per input file)
+msani -i samples/H*.smi --removesalts --tautomers --protonation --pH 7 --pH_range 1 --stereoisomers
+# names: NAME_state.stereo -> C<base id><state><stereo>C
+llb names --inputs samples/H*.smi --ms H*_clean.smi -o library --ph '7+-1'
+# pass 2: 3D and db2 only; no re-neutralizing, no re-enumerating stereo
+msani -i library/library.smi --no-neutralize --no-stereoisomers --gen3d -f db2
+```
+
+(Use the pH settings `molsanitizer/` settles on. The CLI takes integer pH
+only; 7.4 needs the Python API.)
+
+MolSanitizer names pass 1's output `INPUT_state.stereo`: `_N` numbers its
+tautomer x protonation states, `.N` the stereoisomers of a state, each left out
+when there is only one. `llb names` renumbers each from 0 into one base62
+character, so the last two characters of a contract name are **state** and
+**stereo**. The state character now covers tautomers as well as protomers
+(`library.tsv` keeps the column name `protomer_index`). It also:
+
+- checks every SMILES is stereo-closed (re-enumerating gives one isomer), so
+  pass 2's `--no-stereoisomers` builds exactly the named structure;
+- keeps one name per structure across the library and drops multi-fragment
+  rows;
+- sets `invertomer_of` for N-H+ invertomers, which MolSanitizer enumerates as
+  stereoisomers;
+- writes `library.smi`, `library.tsv` (LLB's old columns plus `ms_name`),
+  `dropped.tsv` (every lost input or row, with a reason) and `stats.json`.
+
+Checked on a laptop with MolSanitizer 0.7.4 (2026-10-26): pass 2 on
+`library.smi` writes `db2/<name>.db2` with the contract name intact on the
+`M` line and one db2 per name.
 
 ## 3. Docking jobs
 
@@ -164,16 +200,16 @@ llb mol2-library library.mol2 --library library.tsv -o mol2_lib --shard-size 100
 llb collapse-invertomers scores.parquet --library library.tsv -o scores_collapsed.parquet
 ```
 
-Keeps the best score per N-H+ invertomer group. It needs a `library.tsv` with an
-`invertomer_of` column, which LLB's names step wrote for libraries built
-before 2026-10-26 (`lib_h18_22`). DRAP's `stage4/collapse_invertomers.py` is the
+Keeps the best score per N-H+ invertomer group. It needs `library.tsv`'s
+`invertomer_of` column, from `llb names` (or from LLB's old names step, for
+`lib_h18_22`). DRAP's `stage4/collapse_invertomers.py` is the
 streaming port used at matrix scale. Its parity test loads this script by path
 and still names the old `run_qupkake/` location, so until DRAP is updated to
 `docking/` it skips that check.
 
 ## What is not done here
 
-- **Ligand construction**: MolSanitizer (`molsanitizer/`).
+- **Ligand chemistry and 3D**: MolSanitizer (`molsanitizer/`); naming is `llb names`.
 - **Identity-group dedupe** (`stage4/make_split.py`, SIZE_LADDER_SPEC §3) runs
   on the DRAP side.
 - **Docking**: `rna_pipeline` `pipeline/library_docking/` and DOCK6.

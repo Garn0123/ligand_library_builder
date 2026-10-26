@@ -231,7 +231,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("inputs", nargs="+", help="mol2 files (from llb mol2) or directories of them")
-    ap.add_argument("--library", required=True, help="library.tsv from LLB's names step (tag llb-full-2026-10)")
+    ap.add_argument("--library", required=True, help="library.tsv from llb names")
     ap.add_argument("-o", "--outdir", type=Path, required=True)
     ap.add_argument("--shard-size", type=int, default=1000, help="molecules per mol2 file")
     ap.add_argument("--prefix", default="library")
