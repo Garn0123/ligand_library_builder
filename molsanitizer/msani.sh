@@ -17,22 +17,29 @@
 #
 #   submit opts: [--tasks all|missing|LIST] [--parallel N] [--time T] [--mem M] [-- sbatch args]
 #
-# Settings (environment variables; defaults are Great Lakes, John's install):
+# Settings (environment variables; defaults are Lighthouse, John's install, 2026-10-26):
 #   LLB_MSANI_PREFIX      the env       /nfs/turbo/umms-maom/johnbick/opt/molsanitizer/0.7.4
 #   LLB_MSANI_CONDA_BASE  conda         $CONDA_BASE, else `conda info --base`
-#   LLB_MSANI_ACCOUNT     SLURM account maom2
-#   LLB_MSANI_PARTITION                 standard
-#   LLB_MSANI_PARALLEL    tasks running at once per array (each 1 CPU)   200
-#   LLB_MSANI_MAX_SUBMIT  most tasks one submit may queue (GL MaxSubmit 5000/user)  4500
+#   LLB_MSANI_ACCOUNT     SLURM account maom
+#   LLB_MSANI_PARTITION                 maom-h200
+#   LLB_MSANI_PARALLEL    tasks running at once per array (each 1 CPU)   140
+#   LLB_MSANI_MAX_CPUS    hard cap on --parallel (John: stay under 150 CPUs)  149
+#   LLB_MSANI_MAX_SUBMIT  most tasks one submit may queue                4500
+#
+# The CPU cap holds across arrays too: submit refuses while another msani1/msani2
+# job of yours is queued or running (pass --force-concurrent to override).
 set -euo pipefail
 
 MSB_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 PREFIX="${LLB_MSANI_PREFIX:-/nfs/turbo/umms-maom/johnbick/opt/molsanitizer/0.7.4}"
-ACCOUNT="${LLB_MSANI_ACCOUNT:-maom2}"
-PARTITION="${LLB_MSANI_PARTITION:-standard}"
-PARALLEL="${LLB_MSANI_PARALLEL:-200}"
+ACCOUNT="${LLB_MSANI_ACCOUNT:-maom}"
+PARTITION="${LLB_MSANI_PARTITION:-maom-h200}"
+PARALLEL="${LLB_MSANI_PARALLEL:-140}"
+MAX_CPUS="${LLB_MSANI_MAX_CPUS:-149}"
 MAX_SUBMIT="${LLB_MSANI_MAX_SUBMIT:-4500}"
-MAX_ARRAY_INDEX=4999          # Great Lakes MaxArraySize=5000
+# array indices must stay below the cluster's MaxArraySize
+MAX_ARRAY_INDEX=$(( $(scontrol show config 2>/dev/null | awk '$1=="MaxArraySize"{print $3}' || true) + 0 ))
+(( MAX_ARRAY_INDEX > 0 )) && MAX_ARRAY_INDEX=$(( MAX_ARRAY_INDEX - 1 )) || MAX_ARRAY_INDEX=4999
 
 usage() { sed -n '2,/^set -euo/p' "$MSB_DIR/msani.sh" | sed '$d' | sed 's/^# \{0,1\}//'; }
 
@@ -79,17 +86,26 @@ case "$step" in
         [[ "$npass" == 1 || "$npass" == 2 ]] || { echo "msani.sh submit: pass is 1 or 2, not '$npass'" >&2; exit 64; }
         [[ "$npass" == 1 || -f "$run/pass2/plan.json" ]] || {
             echo "msani.sh submit: pass 2 has no shards yet; run msani.sh names $run first" >&2; exit 1; }
-        tasks=all; time=""; mem=""; extra=()
+        tasks=all; time=""; mem=""; extra=(); concurrent=0
         while [[ $# -gt 0 ]]; do
             case "$1" in
                 --tasks) tasks="$2"; shift 2 ;;
                 --parallel) PARALLEL="$2"; shift 2 ;;
                 --time) time="$2"; shift 2 ;;
                 --mem) mem="$2"; shift 2 ;;
+                --force-concurrent) concurrent=1; shift ;;
                 --) shift; extra=("$@"); break ;;
                 *) echo "msani.sh submit: unknown option $1" >&2; exit 64 ;;
             esac
         done
+        (( PARALLEL >= 1 && PARALLEL <= MAX_CPUS )) || {
+            echo "msani.sh submit: --parallel $PARALLEL is outside 1..$MAX_CPUS (LLB_MSANI_MAX_CPUS)" >&2; exit 1; }
+        if (( ! concurrent )); then
+            busy=$(squeue -h -u "$USER" -n msani1,msani2 -o '%i %j %T' 2>/dev/null | head -5 || true)
+            [[ -z "$busy" ]] || {
+                echo "msani.sh submit: msani jobs already queued/running (CPU cap $MAX_CPUS across arrays):" >&2
+                echo "$busy" >&2; echo "wait for them, or --force-concurrent" >&2; exit 1; }
+        fi
         [[ -f "$run/run.json" ]] || { echo "msani.sh submit: $run has no run.json (msani.sh plan)" >&2; exit 1; }
         # -> "OFFSET ARRAYSPEC COUNT"
         read -r offset spec count < <(PYTHONPATH="$MSB_DIR" python3 - "$run" "$tasks" "$MAX_ARRAY_INDEX" "$npass" <<'EOF'

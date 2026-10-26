@@ -11,14 +11,14 @@ doi:10.26434/chemrxiv.15010189/v1; github.com/carlssonlab/MolSanitizer at
 `de79803`, PyPI 0.7.4. For the paper summary and the comparison with LLB, see
 `docs/MOLSANITIZER_COMPARISON.md` on branch `claude/molsanitizer-comparison-b31000`.
 
-Great Lakes commands (install, selftest, smoke, DOCK6 preflight, production) are in
+Cluster commands (install, selftest, smoke, DOCK6 preflight, production) are in
 the runsheet: https://claude.ai/artifact/V7yUdTvymyZheaapV3LnKk
 
 ## 1. What MolSanitizer needs and produces
 
 | | |
 | --- | --- |
-| **Install** | `pip install molsanitizer==0.7.4`. Prebuilt wheels (manylinux_2_28 x86_64, Python 3.10–3.14) carry the compiled conformer, stereo and AMSOL code; Great Lakes (RHEL 8, glibc 2.28) qualifies. RDKit comes from PyPI: 0.7.4 asks for ≥ 2025.3.1, its docs list 2025.9.1–2026.3.6 as tested, so we pin **2026.3.6**. Apache 2.0. |
+| **Install** | `pip install molsanitizer==0.7.4`. Prebuilt wheels (manylinux_2_28 x86_64, Python 3.10–3.14) carry the compiled conformer, stereo and AMSOL code; Lighthouse and Great Lakes (RHEL 8, glibc 2.28) qualify. RDKit comes from PyPI: 0.7.4 asks for ≥ 2025.3.1, its docs list 2025.9.1–2026.3.6 as tested, so we pin **2026.3.6**. Apache 2.0. |
 | **External tools** | **None needed, none licensed.** Open Babel (conda-forge) is optional: it is the embedding fallback after a 2-min RDKit timeout, and we install it. CORINA and OpenEye (OEB output) are optional and unused. AMSOL 7.1 is built in as a C++ port. |
 | **Input** | 2 columns `SMILES ID`, no header, whitespace or tab separated, plain or gz/bz2/xz. |
 | **Steps** (order fixed) | metal complexes → salts → filters (all off unless asked) → neutralize → tautomers (2 layers) → PAINS/unwanted → protonation (SMARTS rules, integer pKa, pH ± range) → stereoisomers (RDKit, ≤ 8, 3D-embeddable only) → conformers (srETKDGv3 + ring library + TorLib sampling, MMFF94s, ≤ 2,000, 25 kcal/mol window, 0.5 Å RMSD) → AMSOL → db2. |
@@ -68,7 +68,7 @@ and LLB's naming step sits between the passes:
 
 Every pass-2 db2's M-line name is then checked against the requested name.
 
-## 3. Install (Great Lakes)
+## 3. Install (Turbo; used from Lighthouse)
 
 ```bash
 llb msani install          # -> /nfs/turbo/umms-maom/johnbick/opt/molsanitizer/0.7.4
@@ -81,7 +81,10 @@ md5s) and `requirements.lock.txt`. Commit both into `environment/`, and
 `install.sh PREFIX --from-lock` then rebuilds the same environment. The install
 also checks that the compiled extensions load and that `obabel` is found.
 Settings are environment variables, listed in `msani.sh` (`LLB_MSANI_PREFIX`,
-`LLB_MSANI_ACCOUNT=maom2`, …).
+`LLB_MSANI_ACCOUNT=maom`, `LLB_MSANI_PARTITION=maom-h200`,
+`LLB_MSANI_PARALLEL=140`, hard cap `LLB_MSANI_MAX_CPUS=149`). Builds run on **Lighthouse**
+(John, 2026-10-26), kept under 150 CPUs: `submit` refuses `--parallel` above the cap
+and refuses while another msani array of yours is queued or running.
 
 ## 4. Workflow
 
@@ -160,8 +163,8 @@ Read off: s/parent (pass 1), s/name (pass 2), names/parent, `MaxRSS` (sacct), db
 
 **Production H18–H30**: 13 bins × 10,000 = 130,000 parents. Until the smoke test
 measures it, assume ~2 names/parent (LLB's median was ~1.9; pH range 1 adds some) and
-10–60 s per name at 600 conformers. That brackets 260k names at **~0.7k–4.3k CPU-h**: 2–11 h of
-wall time at 400 CPUs. db2_converter cost ~50 s/name. Pass 1 is ~seconds per
+10–60 s per name at 600 conformers. That brackets 260k names at **~0.7k–4.3k CPU-h**: 5–31 h of
+wall time at 140 CPUs. db2_converter cost ~50 s/name. Pass 1 is ~seconds per
 parent: 500 parents per task, ~260 tasks, under an hour. `llb names` over the
 union is one job (srun, a few minutes). Pass 2 carries the cost. Pick its
 `--per-shard` (names per task) so a task takes ~1.5 h:
@@ -170,8 +173,8 @@ union is one job (srun, a few minutes). Pass 2 carries the cost. Pick its
 per_shard ≈ 5400 / seconds_per_name      # e.g. 5400/30 = 180 names -> ~1,450 tasks for 260k names
 ```
 
-That is under MaxSubmit 5,000 and MaxArraySize, so it fits in one submit. Run it
-with `--parallel 400`, which leaves room inside maom_root's 2,000-CPU cap. Set
+`submit` checks the cluster's MaxArraySize and refuses more than 4,500 tasks in one
+call. Run it with `--parallel 140` (the default; the cap is 149). Set
 the time limit to 3× the smoke run's slowest pass-2 task. Copy the run to Turbo
 when done (scratch purges after 60 days).
 

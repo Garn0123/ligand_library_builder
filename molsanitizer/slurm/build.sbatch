@@ -5,7 +5,7 @@
 #   build.sbatch RUN PASS OFFSET MSB_DIR PREFIX CONDA_BASE
 #
 # shard = SLURM_ARRAY_TASK_ID + OFFSET (the offset keeps array indices under
-# Great Lakes' MaxArraySize when a run has more shards than that).
+# the cluster's MaxArraySize when a run has more shards than that).
 # build_shard.py skips a shard that is already done, so resubmitting is safe.
 #SBATCH --job-name=msani
 #SBATCH --nodes=1
