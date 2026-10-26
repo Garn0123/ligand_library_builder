@@ -34,6 +34,14 @@ chmod +x *.sh                          # yes, really — see Gotcha 1
 ./tranche_pattern.sh permanent.tsv
 ```
 
+## ZINC's 3D db2s for specific molecules
+
+Downloading whole bins of 3D is not an option past ~H17 (H30 alone is 6.6 TB of
+db2). `zinc3d/RUNBOOK.md` fetches only the chunks that hold a given list of ZINC
+ids, found exactly through each chunk's small `.pdbqt.tgz` sidecar, and pulls
+those ids' records out into DOCK-ready `.db2.gz` files. `fetch.sh`/`status.sh`
+also handle the plain-text per-tranche id lists (`.txt`) it uses.
+
 ## SMILES (2D) instead of db2
 
 The same loop fetches 2D tranches (`zinc22/2d/H17/H17M100.smi.gz`): pick SMILES
@@ -61,6 +69,7 @@ whole path from here to db2.
 | `tranche_pattern.sh` | Sanity-checks whether 404s are chemically real or a bug. |
 | `db2_sources.py` | Streams `.db2` records straight out of the tarballs. Don't extract. |
 | `sample_2d.py` | N SMILES per heavy-atom bin from ZINC22 2D: uniform from downloaded bins (`--local`), or streamed for a pilot. |
+| `zinc3d/` | ZINC22's own 3D db2s for a given list of ZINC ids (e.g. an LLB library's parents): catalog, cost estimate, exact id -> chunk index, targeted fetch, extraction. **See `zinc3d/RUNBOOK.md`.** |
 
 Generated as you go: `urls.txt` (yours), `missing.txt`, `retry.txt`,
 `permanent.tsv`, `failed.tsv`, `wget.log`, `joblog-*.tsv`, `corrupt.txt`.

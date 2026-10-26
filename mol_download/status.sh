@@ -25,9 +25,10 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 sed "s|^${BASE}||" "$URLS" | sort -u > "$tmp/expected"
-# .tgz (3D db2 archives) or .smi.gz (2D SMILES). Not -name '*.{tgz,gz}':
+# .tgz (3D db2 archives and sidecars), .smi.gz (2D SMILES) or .txt (zinc3d id
+# lists). Not -name '*.{tgz,gz}':
 # find does no brace expansion, so that pattern matches nothing at all.
-find "$ROOT" \( -name '*.tgz' -o -name '*.gz' \) -type f 2>/dev/null | sed 's|^\./||' | sort -u > "$tmp/have"
+find "$ROOT" \( -name '*.tgz' -o -name '*.gz' -o -name '*.txt' \) -type f 2>/dev/null | sed 's|^\./||' | sort -u > "$tmp/have"
 
 comm -23 "$tmp/expected" "$tmp/have" | sed "s|^|${BASE}|" | sort -u > missing.txt
 

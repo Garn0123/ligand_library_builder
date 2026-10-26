@@ -22,6 +22,13 @@
 #   llb fetch-verify [--purge]  /  llb fetch-status LIST
 #   llb tranche-pattern [permanent.tsv]  are the 404s real absences?   (no env)
 #   llb sample ARGS           mol_download/sample_2d.py                  (no env)
+#   ZINC22's own 3D db2s for a set of ZINC ids (mol_download/zinc3d/RUNBOOK.md):
+#   llb zinc3d-catalog ARGS   list every chunk + size on files.docking.org   (PREP)
+#   llb zinc3d-plan ARGS      ids -> id lists to fetch + cost estimate       (PREP)
+#   llb zinc3d-index groups|chunks ARGS  ids -> exact chunks, via sidecars   (PREP)
+#   llb zinc3d-fetch LIST [J] one SLURM job: run.sh + retry passes (logs -> ./logs)
+#   llb zinc3d-extract PLAN OUT [opts]   SLURM array: wanted records -> db2.gz
+#   llb zinc3d-collect ARGS   merge records/ after the array; check nothing lost (PREP)
 #   llb parents ARGS          run_qupkake/prepare_parents.py             (PREP)
 #   llb qupkake ARGS          run_qupkake/qupkake_protomers.py           (QUPKAKE)
 #   llb molgpka ARGS          pka_triage/molgpka.py  (per-site pKa; --check)  (PKA)
@@ -83,6 +90,12 @@ case "$step" in
     fetch-status)   exec "$D/status.sh" "$@" ;;
     tranche-pattern) exec "$D/tranche_pattern.sh" "$@" ;;
     sample)         exec python3 "$D/sample_2d.py" "$@" ;;
+    zinc3d-catalog) exec "$W" PREP python "$D/zinc3d/catalog.py" "$@" ;;
+    zinc3d-plan)    exec "$W" PREP python "$D/zinc3d/plan.py" "$@" ;;
+    zinc3d-index)   exec "$W" PREP python "$D/zinc3d/index.py" "$@" ;;
+    zinc3d-fetch)   exec "$D/zinc3d/submit_fetch.sh" "$@" ;;
+    zinc3d-extract) exec "$D/zinc3d/submit_extract.sh" "$@" ;;
+    zinc3d-collect) exec "$W" PREP python "$D/zinc3d/extract.py" --collect "$@" ;;
     parents)        exec "$W" PREP python "$Q/prepare_parents.py" "$@" ;;
     qupkake)        exec "$W" QUPKAKE python "$Q/qupkake_protomers.py" "$@" ;;
     molgpka)        exec "$W" PKA python "$LLB_ROOT/pka_triage/molgpka.py" "$@" ;;
