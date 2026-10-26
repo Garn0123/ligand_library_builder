@@ -1,37 +1,43 @@
 #!/usr/bin/env python3
 """
-build_shard.py -- one array task: a shard of parents -> named states -> db2.gz.
+build_shard.py -- one array task of a MolSanitizer build, pass 1 or pass 2.
 
-Runs inside the MolSanitizer env (see environment/). Three steps per shard:
+Runs inside the MolSanitizer env (see environment/). The build (UPSTREAM.md
+section 2) is two MolSanitizer passes with LLB's naming step between them,
+because a db2 keeps only the last 16 characters of a name and a ZINC22 id is
+already 16:
 
-  2D   MolSanitizer's Python API on one parent at a time: salts, neutralize,
-       tautomers, protonation at the run's pH, stereoisomers. One parent per
-       call so each failure has its own reason and each parent its own seconds.
-       (The API takes a non-integer pH; the msani CLI does not.)
-  name each state -> a 16-character contract name (naming.py).
-  3D   the msani CLI on the named states: --no-neutralize --no-stereoisomers
-       -3d -f db2, so it neither changes a state nor renames it. One call for the
-       shard; if that call dies or leaves molecules unaccounted, each remaining
-       molecule is retried alone under --mol-timeout, so one crash costs one
-       molecule, not the shard.
+  pass 1  chemistry only, SMILES out. MolSanitizer's Python API on one parent at
+          a time, named by its INPUT name: salts, neutralize, tautomers,
+          protonation at the run's pH (the API takes 7.4; the CLI only
+          integers), stereoisomers. Writes MolSanitizer's own `INPUT_state.stereo`
+          rows to pass1/out/NNNNN_clean.smi, plus a reason for every parent that
+          returns nothing.
+  names   `llb names` over every pass-1 file at once (msani.sh names), which
+          writes library/library.smi with contract names.
+  pass 2  3D + db2 only, on contract names: the msani CLI with --no-neutralize
+          --no-stereoisomers --metal off -3d -f db2, so it neither changes a
+          state nor renames it. One call per shard; molecules that call leaves
+          without a db2 or an error (it died or timed out) are retried one at a
+          time under mol_timeout, so one crash costs one molecule.
 
 Every db2 is checked before it is kept (the guarantee `llb verify-db2` gave):
-each record's M-line name is the requested name, and its AMSOL total charge is
-the state's formal charge within charge_tol.
+each record's M-line name is the requested name, its AMSOL total charge is the
+formal charge within charge_tol, and it has conformations.
 
-Outputs (RUN from run.json, K = shard number):
-  RUN/db2_run/out/K/<name>.db2.gz    one per built name (prepare.py's layout)
-  RUN/tasks/K/states.tsv             one row per named state: library.tsv columns
-                                     + status/detail/db2 header fields
-  RUN/tasks/K/parents.tsv            one row per shard line: built or failed + reason
-  RUN/tasks/K/timing.tsv             per name: MolSanitizer's own step times + ours
-  RUN/tasks/K/DONE.json              last; versions, host, seconds, input sha256
+Outputs (K = shard):
+  pass 1: RUN/pass1/out/K_clean.smi           MolSanitizer rows, `SMILES MS_NAME`
+          RUN/pass1/tasks/K/parents.tsv       every shard line: ok / failed + reason
+  pass 2: RUN/db2_run/out/K/<name>.db2.gz     one per built name (prepare.py's layout)
+          RUN/pass2/tasks/K/states.tsv        every name: status, detail, db2 facts
+          RUN/pass2/tasks/K/timing.tsv        MolSanitizer's step times + ours
+  both:   RUN/passN/tasks/K/DONE.json         last; versions, host, seconds, input sha256
 
-Resumable: a shard whose DONE.json matches its input and options is skipped; an
-interrupted one is redone, keeping every db2.gz already written for an unchanged
-name (each is written to a temporary file and renamed, so a present one is whole).
+Resumable: a shard whose DONE.json matches its input and options is skipped. An
+interrupted pass-2 shard keeps every db2.gz already written (each is written to a
+temporary file and renamed, so a present one is whole).
 
-    python build_shard.py --run RUN --shard 17
+    python build_shard.py --run RUN --pass 1 --shard 17
 """
 from __future__ import annotations
 
@@ -49,18 +55,10 @@ import tempfile
 import time
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
-from naming import (assign_indices, base_id, base_id_of, contract_name,  # noqa: E402
-                    invertomer_key, is_zinc, parse_state_id)
-
-LIBRARY_COLS = ["name", "base_id", "parent_id", "zinc_id", "input_name", "protomer_index",
-                "stereo_index", "net_charge", "heavy_atoms", "ph_values", "population_estimate",
-                "invertomer_of", "note", "smiles", "site_source"]
-STATE_COLS = LIBRARY_COLS + ["gidx", "msani_id", "status", "detail", "db2_records",
-                             "amsol_charge", "db2_bytes"]
 PARENT_COLS = ["gidx", "input_name", "parent_id", "input_smiles", "status", "reason",
-               "n_states", "n_names", "n_ok", "seconds_2d", "seconds_3d"]
+               "n_rows", "seconds_2d"]
+STATE_COLS = ["name", "net_charge", "status", "detail", "db2_records", "amsol_charge",
+              "db2_bytes", "smiles"]
 TIMING_COLS = ["name", "how", "seconds_wall", "embedding", "amsol", "sampling",
                "db2_conversion", "msani_total"]
 
@@ -112,14 +110,13 @@ def cpu_model() -> str:
     return platform.processor()
 
 
-# ---- 2D ------------------------------------------------------------------------
+# ---- pass 1: chemistry ----------------------------------------------------------
 
-def prep_2d(rows, opts, work: Path):
-    """Per parent: (parent row, [state dicts]). States carry MolSanitizer's id."""
+def pass1(rows, opts, work: Path, out_smi: Path) -> list[dict]:
+    """Every parent through MolSanitizer's 2D steps; its rows -> out_smi."""
     from pandas import DataFrame
     from rdkit import Chem, RDLogger
     from msani.api import Msani
-    from msani.filtering.filters import Filters
     RDLogger.DisableLog("rdApp.*")
 
     rejected = work / "rejected_2d.txt"
@@ -130,96 +127,48 @@ def prep_2d(rows, opts, work: Path):
                  stereoisomers=True, max_stereoisomers=opts["max_stereoisomers"],
                  stereo_timeout=opts["stereo_timeout"], randomSeed=opts["random_seed"],
                  metal=opts["metal"], numcores=1)
-    out = []
+    parents, lines = [], []
     with proc:
         for gidx, smi, input_name, pid in rows:
             t0 = time.perf_counter()
-            prow = {"gidx": gidx, "input_name": input_name, "parent_id": pid,
-                    "input_smiles": smi, "status": "", "reason": ""}
-            states = []
+            p = {"gidx": gidx, "input_name": input_name, "parent_id": pid,
+                 "input_smiles": smi, "status": "ok", "reason": "", "n_rows": 0}
             if Chem.MolFromSmiles(smi) is None:
-                prow.update(status="failed", reason="invalid_smiles")
+                p.update(status="failed", reason="invalid_smiles")
             else:
                 try:
-                    df = proc.run(DataFrame({"smiles": [smi], "ids": [pid]}),
+                    # the INPUT name, not the parent id: `llb names` matches
+                    # MolSanitizer's suffixes against the names in the sample files
+                    df = proc.run(DataFrame({"smiles": [smi], "ids": [input_name]}),
                                   rejected_file=str(rejected), metal_error_file=str(metal_err))
                 except Exception as e:  # one parent's crash is that parent's reason
-                    prow.update(status="failed", reason=f"msani_2d_error: {type(e).__name__}: {e}"[:300])
+                    p.update(status="failed", reason=f"msani_2d_error: {type(e).__name__}: {e}"[:300])
                     df = None
                 if df is not None and df.empty:
-                    prow.update(status="failed", reason="removed_in_2d: " + grep_reason(pid, rejected, metal_err))
+                    p.update(status="failed",
+                             reason="removed_in_pass1: " + grep_reason(input_name, rejected, metal_err))
                 elif df is not None:
-                    kept = Filters.remove_exotic_chem_to_db2(df.copy())
-                    kept_ids = set(kept["ids"])
-                    for _, r in df.iterrows():
-                        states.append({"msani_id": str(r["ids"]), "smiles": str(r["smiles"]),
-                                       "exotic": r["ids"] not in kept_ids})
-            prow["seconds_2d"] = round(time.perf_counter() - t0, 3)
-            out.append((prow, states))
-    return out
+                    got = [(str(s), str(i)) for s, i in zip(df["smiles"], df["ids"])]
+                    lines += [f"{s} {i}\n" for s, i in got]
+                    p["n_rows"] = len(got)
+            p["seconds_2d"] = round(time.perf_counter() - t0, 3)
+            parents.append(p)
+    tmp = out_smi.with_name(out_smi.name + ".tmp")
+    tmp.write_text("".join(lines))
+    tmp.replace(out_smi)
+    return parents
 
 
-def grep_reason(pid: str, *files: Path) -> str:
+def grep_reason(name: str, *files: Path) -> str:
     for f in files:
         if f.exists():
             for line in open(f):
-                if pid in line.split():
-                    return line.strip().split(pid, 1)[-1].strip()[:200] or f.name
+                if name in line.split():
+                    return line.strip().split(name, 1)[-1].strip()[:200] or f.name
     return "no reason recorded by MolSanitizer"
 
 
-# ---- names ---------------------------------------------------------------------
-
-def name_states(prepped, opts):
-    """Contract names, invertomer links, in-shard duplicate structures."""
-    from rdkit import Chem
-    owner: dict[str, str] = {}
-    ph = (f"{opts['pH'] - opts['pH_range']:g}-{opts['pH'] + opts['pH_range']:g}"
-          if opts["pH_range"] else f"{opts['pH']:g}")
-    for prow, states in prepped:
-        if prow["status"]:
-            continue
-        pid = prow["parent_id"]
-        keys = [parse_state_id(pid, s["msani_id"]) for s in states]
-        if any(k is None for k in keys):
-            bad = [s["msani_id"] for s, k in zip(states, keys) if k is None]
-            prow.update(status="failed", reason=f"unparsed_msani_id: {bad[:3]}")
-            states.clear()
-            continue
-        idx = assign_indices(keys)
-        if max(i for i, _ in idx) > 61 or max(j for _, j in idx) > 61:
-            prow.update(status="failed", reason="more than 62 states or isomers")
-            states.clear()
-            continue
-        base = base_id_of(pid)
-        first_of: dict[tuple[int, str], str] = {}
-        for s, (i, j) in zip(states, idx):
-            name = contract_name(base, i, j)
-            mol = Chem.MolFromSmiles(s["smiles"])
-            unassigned = sum(1 for _, t in Chem.FindMolChiralCenters(
-                mol, includeUnassigned=True, useLegacyImplementation=False) if t == "?")
-            inv = first_of.setdefault((i, invertomer_key(s["smiles"])), name)
-            s.update({
-                "name": name, "base_id": base_id(name), "parent_id": pid,
-                "zinc_id": pid if is_zinc(pid) else "", "input_name": prow["input_name"],
-                "protomer_index": i, "stereo_index": j,
-                "net_charge": Chem.GetFormalCharge(mol), "heavy_atoms": mol.GetNumHeavyAtoms(),
-                "ph_values": ph, "population_estimate": "",
-                "invertomer_of": inv if inv != name else "",
-                "note": f"unassigned_stereo={unassigned}" if unassigned else "",
-                "site_source": "molsanitizer", "gidx": prow["gidx"],
-                "status": "pending", "detail": ""})
-            canon = Chem.MolToSmiles(mol)
-            if s.pop("exotic"):
-                s.update(status="EXOTIC", detail="not db2-compatible (MolSanitizer remove_exotic_chem_to_db2)")
-            elif canon in owner:
-                s.update(status="DUPLICATE", detail=f"same structure as {owner[canon]}")
-            else:
-                owner[canon] = name
-    return prepped
-
-
-# ---- 3D ------------------------------------------------------------------------
+# ---- pass 2: 3D + db2 -------------------------------------------------------------
 
 def msani_cmd(todo: Path, opts: dict) -> list[str]:
     exe = shutil.which("msani") or str(Path(sys.executable).parent / "msani")
@@ -274,7 +223,11 @@ def read_timing(work: Path) -> dict[str, dict]:
 def check_db2(path: Path, name: str, charge: int, tol: float) -> tuple[str, str, dict]:
     """(status, detail, header facts) for one db2 written by MolSanitizer."""
     heads, charges, nconfs = [], [], []
-    lines = path.read_text().splitlines()
+    if path.suffix == ".gz":
+        with gzip.open(path, "rt") as fh:
+            lines = fh.read().splitlines()
+    else:
+        lines = path.read_text().splitlines()
     for i, line in enumerate(lines):
         t = line.split()
         if len(t) >= 11 and t[0] == "M" and not t[1].lstrip("+-").replace(".", "").isdigit():
@@ -306,14 +259,38 @@ def keep_db2(src: Path, dest: Path) -> int:
     return dest.stat().st_size
 
 
-def build_3d(states, opts, scratch: Path, outdir: Path, taskdir: Path, timing: dict):
-    """Run msani on every pending state; set each state's status."""
+def keep_log(work: Path, taskdir: Path, tag: str) -> None:
+    for f in ("todo.log", "msani.stdout", "msani_error.err"):
+        if (work / f).exists():
+            shutil.copy2(work / f, taskdir / f"{tag}.{f}")
+
+
+def pass2(states, opts, scratch: Path, outdir: Path, taskdir: Path) -> dict:
+    """Build every state's db2; set each state's status. Returns per-name timing."""
+    from pandas import DataFrame
+    from rdkit import Chem, RDLogger
+    from msani.filtering.filters import Filters
+    RDLogger.DisableLog("rdApp.*")
+
+    timing: dict[str, dict] = {}
+    for s in states:
+        s["net_charge"] = Chem.GetFormalCharge(Chem.MolFromSmiles(s["smiles"]))
+    # what pass 2's gen3d would drop without a word (msani filters.remove_exotic_chem_to_db2)
+    df = DataFrame({"smiles": [s["smiles"] for s in states], "ids": [s["name"] for s in states]})
+    df["mol"] = df["smiles"].apply(Chem.MolFromSmiles)
+    kept = set(Filters.remove_exotic_chem_to_db2(df)["ids"]) if len(df) else set()
+    for s in states:
+        if s["name"] not in kept:
+            s.update(status="EXOTIC", detail="not db2-compatible (MolSanitizer remove_exotic_chem_to_db2)")
+        elif (outdir / f"{s['name']}.db2.gz").exists():           # resumed shard: already kept
+            gz = outdir / f"{s['name']}.db2.gz"
+            status, detail, facts = check_db2(gz, s["name"], int(s["net_charge"]), opts["charge_tol"])
+            if status == "OK":
+                s.update(status="OK", detail="kept from an earlier attempt", db2_bytes=gz.stat().st_size, **facts)
+                timing[s["name"]] = {"how": "earlier_attempt"}
+            else:
+                gz.unlink()                                         # rebuild it
     todo = [s for s in states if s["status"] == "pending"]
-    for s in todo:                                  # resumed shard: already kept
-        if (outdir / f"{s['name']}.db2.gz").exists():
-            s.update(status="OK", detail="kept from an earlier attempt")
-            timing[s["name"]] = {"how": "earlier_attempt"}
-    todo = [s for s in todo if s["status"] == "pending"]
 
     def harvest(work: Path, batch, how: str, rc, wall: float):
         errs, times = read_errors(work), read_timing(work)
@@ -336,7 +313,7 @@ def build_3d(states, opts, scratch: Path, outdir: Path, taskdir: Path, timing: d
                          else "no db2 and no error recorded (see msani.stdout)")
 
     if todo:
-        # one call for the shard; generous ceiling, the per-molecule retry is the real guard
+        # one call for the shard; a generous ceiling, the per-molecule retry is the real guard
         rc, wall = run_msani(todo, opts, scratch / "batch", timeout=opts["mol_timeout"] * len(todo))
         harvest(scratch / "batch", todo, "batch", rc, wall)
         keep_log(scratch / "batch", taskdir, "batch")
@@ -345,12 +322,7 @@ def build_3d(states, opts, scratch: Path, outdir: Path, taskdir: Path, timing: d
         harvest(scratch / "alone", [s], "alone", rc, wall)
         if rc == "timeout":
             s.update(status="BUILD_FAILED", detail=f"timeout after {opts['mol_timeout']} s alone")
-
-
-def keep_log(work: Path, taskdir: Path, tag: str) -> None:
-    for f in ("todo.log", "msani.stdout", "msani_error.err"):
-        if (work / f).exists():
-            shutil.copy2(work / f, taskdir / f"{tag}.{f}")
+    return timing
 
 
 # ---- main ----------------------------------------------------------------------
@@ -358,27 +330,26 @@ def keep_log(work: Path, taskdir: Path, tag: str) -> None:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--run", type=Path, required=True)
+    ap.add_argument("--pass", dest="npass", type=int, choices=(1, 2), required=True)
     ap.add_argument("--shard", type=int, required=True)
     ap.add_argument("--scratch", type=Path, default=None,
                     help="node-local work dir (default: $SLURM_TMPDIR, $TMPDIR, /tmp)")
     args = ap.parse_args(argv)
 
     run = args.run.resolve()
-    meta = json.loads((run / "run.json").read_text())
-    opts = meta["options"]
+    opts = json.loads((run / "run.json").read_text())["options"]
     key = f"{args.shard:05d}"
-    shard = run / "shards" / f"{key}.tsv"
-    taskdir = run / "tasks" / key
-    outdir = run / "db2_run" / "out" / key
+    pdir = run / f"pass{args.npass}"
+    shard = pdir / "shards" / (f"{key}.tsv" if args.npass == 1 else f"{key}.smi")
+    taskdir = pdir / "tasks" / key
     taskdir.mkdir(parents=True, exist_ok=True)
-    outdir.mkdir(parents=True, exist_ok=True)
 
     in_sha, o_hash = sha256(shard), options_hash(opts)
     done = taskdir / "DONE.json"
     if done.exists():
         d = json.loads(done.read_text())
         if d.get("input_sha256") == in_sha and d.get("options_hash") == o_hash:
-            print(f"shard {key}: already done ({d['counts']})")
+            print(f"pass {args.npass} shard {key}: already done ({d['counts']})")
             return 0
         done.unlink()
 
@@ -386,76 +357,50 @@ def main(argv=None) -> int:
     for v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
         os.environ[v] = "1"
     started, t_all = time.strftime("%Y-%m-%dT%H:%M:%S%z"), time.perf_counter()
-    rows = []
-    for line in open(shard):
-        g, smi, name, pid = line.rstrip("\n").split("\t")
-        rows.append((int(g), smi, name, pid))
-
     base = args.scratch or Path(os.environ.get("SLURM_TMPDIR") or os.environ.get("TMPDIR") or "/tmp")
-    scratch = Path(tempfile.mkdtemp(prefix=f"msani_{key}_", dir=base))
+    scratch = Path(tempfile.mkdtemp(prefix=f"msani_p{args.npass}_{key}_", dir=base))
     try:
-        prepped = name_states(prep_2d(rows, opts, scratch), opts)
-        states = [s for _, ss in prepped for s in ss]
-
-        # A resumed shard keeps old db2s only for names whose structure is unchanged.
-        prev = taskdir / "states.partial.tsv"
-        if prev.exists():
-            with open(prev, newline="") as fh:
-                old = {r["name"]: r["smiles"] for r in csv.DictReader(fh, delimiter="\t")}
-            for s in states:
-                if s["name"] in old and old[s["name"]] != s["smiles"]:
-                    (outdir / f"{s['name']}.db2.gz").unlink(missing_ok=True)
-        write_tsv(prev, STATE_COLS, states)
-        wanted = {f"{s['name']}.db2.gz" for s in states}
-        for f in outdir.iterdir():                  # strays from a different earlier plan
-            if f.name not in wanted:
-                f.unlink()
-
-        timing: dict[str, dict] = {}
-        build_3d(states, opts, scratch, outdir, taskdir, timing)
+        if args.npass == 1:
+            rows = []
+            for line in open(shard):
+                g, smi, name, pid = line.rstrip("\n").split("\t")
+                rows.append((int(g), smi, name, pid))
+            (pdir / "out").mkdir(exist_ok=True)
+            parents = pass1(rows, opts, scratch, pdir / "out" / f"{key}_clean.smi")
+            write_tsv(taskdir / "parents.tsv", PARENT_COLS, parents)
+            counts = {"parents": len(parents), "ok": sum(p["status"] == "ok" for p in parents),
+                      "rows": sum(p["n_rows"] for p in parents)}
+            extra = {"seconds_2d": round(sum(p["seconds_2d"] for p in parents), 1)}
+        else:
+            states = []
+            for line in open(shard):
+                smi, name = line.split()[:2]
+                states.append({"name": name, "smiles": smi, "status": "pending", "detail": ""})
+            outdir = run / "db2_run" / "out" / key
+            outdir.mkdir(parents=True, exist_ok=True)
+            wanted = {f"{s['name']}.db2.gz" for s in states}
+            for f in outdir.iterdir():              # strays from a different earlier plan
+                if f.name not in wanted:
+                    f.unlink()
+            timing = pass2(states, opts, scratch, outdir, taskdir)
+            write_tsv(taskdir / "states.tsv", STATE_COLS, states)
+            write_tsv(taskdir / "timing.tsv", TIMING_COLS,
+                      [{"name": n, **t} for n, t in sorted(timing.items())])
+            counts = {"names": len(states), "ok": sum(s["status"] == "OK" for s in states)}
+            extra = {}
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
-    parents = []
-    for prow, ss in prepped:
-        ok = sum(1 for s in ss if s["status"] == "OK")
-        secs = 0.0
-        for s in ss:
-            t = timing.get(s.get("name", ""), {})
-            try:
-                secs += float(t.get("seconds_wall") or t.get("msani_total") or 0)
-            except ValueError:
-                pass
-        if not prow["status"]:
-            if ok:
-                prow["status"] = "built"
-            else:
-                prow["status"] = "failed"
-                why = sorted({f"{s['status']}: {s['detail']}" for s in ss})
-                prow["reason"] = ("no state built -- " + " | ".join(why))[:500] if why else "no states"
-        prow.update(n_states=len({s.get("protomer_index") for s in ss}), n_names=len(ss),
-                    n_ok=ok, seconds_3d=round(secs, 3))
-        parents.append(prow)
-
-    write_tsv(taskdir / "states.tsv", STATE_COLS, states)
-    write_tsv(taskdir / "parents.tsv", PARENT_COLS, parents)
-    write_tsv(taskdir / "timing.tsv", TIMING_COLS,
-              [{"name": n, **t} for n, t in sorted(timing.items())])
-    prev.unlink(missing_ok=True)
-    counts = {"parents": len(parents), "built": sum(p["status"] == "built" for p in parents),
-              "names": len(states), "ok": sum(s["status"] == "OK" for s in states)}
-    d = {"shard": args.shard, "input_sha256": in_sha, "options_hash": o_hash, "counts": counts,
-         "versions": versions(), "host": os.uname().nodename, "cpu": cpu_model(),
+    d = {"pass": args.npass, "shard": args.shard, "input_sha256": in_sha, "options_hash": o_hash,
+         "counts": counts, "versions": versions(), "host": os.uname().nodename, "cpu": cpu_model(),
          "slurm_job": os.environ.get("SLURM_ARRAY_JOB_ID") or os.environ.get("SLURM_JOB_ID", ""),
          "slurm_task": os.environ.get("SLURM_ARRAY_TASK_ID", ""),
          "started": started, "finished": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-         "seconds": round(time.perf_counter() - t_all, 1),
-         "seconds_2d": round(sum(p["seconds_2d"] for p in parents), 1)}
+         "seconds": round(time.perf_counter() - t_all, 1), **extra}
     tmp = done.with_suffix(".tmp")
     tmp.write_text(json.dumps(d, indent=2) + "\n")
     tmp.replace(done)
-    print(f"shard {key}: {counts['built']}/{counts['parents']} parents built, "
-          f"{counts['ok']}/{counts['names']} names OK, {d['seconds']} s")
+    print(f"pass {args.npass} shard {key}: {counts}, {d['seconds']} s")
     return 0
 
 

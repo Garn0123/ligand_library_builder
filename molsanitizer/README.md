@@ -38,33 +38,35 @@ the runsheet: https://claude.ai/artifact/V7yUdTvymyZheaapV3LnKk
    `~/.config/msani/msani_configurations.yaml` if one exists. Every task points
    `MSANI_CONFIG` at the run's own copy and passes every option explicitly.
 
-## 2. Names: MolSanitizer's states → the 16-character contract
+## 2. Names: two passes with `llb names` between them
 
-`C` + 12-character base id + state + stereo + `C` (DRAP `NAMING_CONTRACT.md`,
-checked by `stage4/validate_names.py`).
+John's decision (2026-10-26; `UPSTREAM.md` section 2). MolSanitizer runs twice
+and LLB's naming step sits between the passes:
+
+1. **Pass 1** does the chemistry only and writes SMILES. Each row is named
+   `INPUT_state.stereo`, after its input name.
+2. **`llb names`** (`naming/assign_names.py`, the only naming code) turns those
+   rows into `C` + 12-character base id + state + stereo + `C` (DRAP
+   `NAMING_CONTRACT.md`).
+3. **Pass 2** builds 3D and db2 from the contract names, with
+   `--no-stereoisomers --no-neutralize`. It adds no suffix, so `name[-16:]` is
+   the whole name.
 
 | field | from |
 | --- | --- |
-| base id | the parent id, the same rule as LLB (`naming.py`, a copy of `run_qupkake/llb_ids.py`): a ZINC id's last 12 characters verbatim, otherwise `Z` + 11 base62 characters of sha256(name). A damaged `ZINC…` id is rejected. |
-| state (contract "protomer") | MolSanitizer's `_k`, renumbered `0..` per parent in its order. It numbers **tautomer × protomer** states: MolSanitizer gives one index to both. Nothing downstream reads meaning from it. |
+| base id | the parent id (`naming/llb_ids.py`): a ZINC id's last 12 characters verbatim, otherwise `Z` + 11 base62 characters of sha256(name). A damaged `ZINC…` id is rejected. |
+| state (contract "protomer") | MolSanitizer's `_k`, renumbered `0..` per parent. It numbers **tautomer × protomer** states, because MolSanitizer gives one index to both. |
 | stereo | MolSanitizer's `.j`, renumbered `0..` per state. |
 
-How: the 2D step sends MolSanitizer the **parent id** and *parses* its suffixes
-(`naming.parse_state_id`; an unexpected format stops the parent with a reason, it
-is not guessed at). The 3D step sends the finished **contract name** with
-`--no-stereoisomers`, so no suffix is added and `name[-16:]` is the whole name.
-Every db2's M-line name is then checked against the requested name.
+`llb names` also enforces four things:
 
-- **Invertomers.** Paper §2.5 says MolSanitizer samples both N-H⁺
-  configurations inside one entry. If its RDKit stereo step still emits them as
-  separate isomers, `invertomer_of` links them with LLB's rule, so DRAP
-  `collapse_invertomers.py` keeps the better score. The smoke test shows which
-  case holds (`collect.json` `n_h_invertomers`).
-- **One structure, one name.** A SMILES reached from two parents keeps the
-  lowest-gidx parent's name. The other is `DUPLICATE` and is not docked, because
-  two base ids for one structure would leak across the identity split.
-- **Limits.** Up to 62 states and 62 isomers per state. MolSanitizer stops at 8
-  isomers anyway; LLB allowed 32.
+- every SMILES is stereo-closed, so pass 2 builds exactly the named structure;
+- one structure gets one name across the library;
+- one fragment per row;
+- `invertomer_of` is set for N-H⁺ invertomers, which MolSanitizer 0.7.4 emits
+  as separate stereoisomers (checked on John's laptop).
+
+Every pass-2 db2's M-line name is then checked against the requested name.
 
 ## 3. Install (Great Lakes)
 
@@ -84,51 +86,48 @@ Settings are environment variables, listed in `msani.sh` (`LLB_MSANI_PREFIX`,
 ## 4. Workflow
 
 ```bash
-llb msani plan H18.smi H19.smi ... -o RUN --per-shard 40   # shard + run.json (stdlib)
-llb msani submit RUN                                      # 1 CPU per shard, logs in RUN/logs/
-llb msani status RUN                                      # done / missing, as array ranges
-llb msani submit RUN --tasks missing                      # resume: done shards are skipped
-llb msani collect RUN --drap-dir $DRAP_DIR                # verify + merge + validate_names
+llb msani plan H18.smi ... H30.smi -o RUN       # pass 1 shards (500 parents each) + run.json
+llb msani submit RUN 1                          # pass 1 array: chemistry, SMILES out
+llb msani status RUN                            # done / missing per pass, as array ranges
+srun ... llb msani names RUN --per-shard 40     # llb names over ALL of pass 1, then pass 2 shards
+llb msani submit RUN 2                          # pass 2 array: 3D + db2
+llb msani submit RUN 2 --tasks missing          # resume (either pass): done shards are skipped
+llb msani collect RUN --drap-dir $DRAP_DIR      # verify + account + validate_names
 ```
 
-Each array task (`build_shard.py`, one shard):
+| step | what it does |
+| --- | --- |
+| **pass 1** (`build_shard.py --pass 1`) | One parent at a time through MolSanitizer's Python API, which takes pH 7.4 (the CLI takes only integers). The parent goes in under its **input name**, so `llb names` can match the suffixes. MolSanitizer's rows go to `pass1/out/NNNNN_clean.smi`, and a parent that returns nothing gets a reason. |
+| **names** (`names_step.py`) | Refuses unless every pass-1 shard is done. Runs `naming/assign_names.py --inputs <the run's sample files> --ms pass1/out/*_clean.smi -o library --ph 7.4+-1`, then cuts `library/library.smi` into pass-2 shards. |
+| **pass 2** (`build_shard.py --pass 2`) | Marks db2-incompatible states (`EXOTIC`). Then runs one `msani … --no-neutralize --no-stereoisomers --metal off -3d -f db2 --timing` call per shard. Molecules that call leaves without a db2 or an error are retried **one at a time** under `mol_timeout`. **Every db2 is checked**: names on the M lines, AMSOL charge = formal charge ± 0.05, conformations > 0. It is then gzipped to `db2_run/out/NNNNN/<name>.db2.gz`. |
 
-1. **2D**: one parent at a time through the Python API, which takes a
-   non-integer pH (the CLI does not). Each failure gets its own reason, and each
-   parent its own seconds.
-2. **Name** the states (§2), mark db2-incompatible ones (`EXOTIC`) and
-   in-shard duplicates.
-3. **3D**: one `msani … -3d -f db2 --no-stereoisomers --no-neutralize
-   --metal off --timing` call for the shard. Molecules the call leaves without a
-   db2 or an error, because it crashed or timed out, are retried **one at a
-   time** under `mol_timeout`, so one bad molecule costs only itself.
-4. **Check every db2 before keeping it**: each record's name is the requested
-   name, AMSOL total charge equals the formal charge (± 0.05, as
-   `llb verify-db2`), and conformations > 0. Then gzip it to
-   `RUN/db2_run/out/NNNNN/<name>.db2.gz` (temp file + rename).
-5. `DONE.json` is written last: versions, host, CPU, SLURM ids, seconds, and the
-   input sha256. A shard whose `DONE.json` matches is skipped. An interrupted
-   shard is redone, but it keeps every db2.gz whose structure is unchanged.
+Each task writes `DONE.json` last, recording versions, host, CPU, SLURM ids,
+seconds and the input sha256. A shard with a matching `DONE.json` is skipped. An
+interrupted pass-2 shard keeps, and re-checks, every db2.gz it already wrote.
 
-`collect.py` works over the **whole** run. It refuses if any shard is missing, if
-any input line is unaccounted for or counted twice, if names or name tails are
-not unique, if a base id spans two parents, or if shards ran different software
-or options. It writes:
+`collect.py` refuses if any of these hold:
+
+- a shard or the naming step is missing;
+- an input line is unaccounted for;
+- a library name was not built exactly once;
+- shards ran different software or options.
+
+It writes:
 
 | file | for |
 | --- | --- |
 | `db2_verification.csv` | `prepare.py`: only `status == OK` is docked |
 | `db2_run/out/NNNNN/*.db2.gz` | `prepare.py --db2-root` default |
-| `library/library.tsv`, `library.smi` | DRAP `collapse_invertomers.py` / `join_library.py --llb-library`; `validate_names.py`. LLB's columns: `site_source=molsanitizer`, `population_estimate` empty, `ph_values` = the run's pH |
-| `library/dropped.tsv` | `DUPLICATE` / `EXOTIC` states |
-| `parents_ledger.tsv` | **every input line**: `built`, or `failed` + reason |
+| `library/` (from `llb names`) | `library.tsv` for DRAP `collapse_invertomers.py` / `join_library.py --llb-library`; `library.smi` for `validate_names.py`; `dropped.tsv`; `stats.json` |
+| `parents_ledger.tsv` | **every input line**: `built`, or `failed` + the step that lost it (`plan:`, `pass1:`, `names:`, `pass2:`) and why |
 | `timing.tsv` | per name: MolSanitizer's embedding / AMSOL / sampling / db2 seconds, and ours |
-| `collect.json` | counts, fail reasons, attrition per input file, s/name, CPU-h per 1,000 parents, db2 bytes |
+| `collect.json` | counts, fail reasons, attrition per input file, s/parent (pass 1), s/name (pass 2), CPU-h per pass, db2 bytes |
 | `provenance.json` | MolSanitizer / RDKit / Python / Open Babel versions, options, LLB commit (and whether the checkout was dirty), CPUs, SLURM jobs, time span |
 
 Tests: `pytest molsanitizer/tests` or `python molsanitizer/tests/test_msani_build.py`.
-They need RDKit and pandas, not MolSanitizer: `tests/fake_msani` stands in for its
-API and CLI in 0.7.4's formats.
+They run the real `naming/assign_names.py` between the passes and fake only
+MolSanitizer (`tests/fake_msani`, which uses 0.7.4's formats). They need RDKit
+and pandas.
 
 ## 5. Smoke test, then production sizing
 
@@ -157,22 +156,24 @@ The run passes when:
 5. DOCK 6.13 docks 5 OK names against 1 pocket with plausible scores, using
    `prepare.py` + `run_pairs.sbatch` from the library-docking README §1.
 
-Read off: s/name, names/parent, `MaxRSS` (sacct), db2 size, and `n_h_invertomers`.
+Read off: s/parent (pass 1), s/name (pass 2), names/parent, `MaxRSS` (sacct), db2 size, and `n_h_invertomers`.
 
 **Production H18–H30**: 13 bins × 10,000 = 130,000 parents. Until the smoke test
 measures it, assume ~2 names/parent (LLB's median was ~1.9; pH range 1 adds some) and
 10–60 s per name at 600 conformers. That brackets 260k names at **~0.7k–4.3k CPU-h**: 2–11 h of
-wall time at 400 CPUs. db2_converter cost ~50 s/name. Pick `--per-shard` so a task
-takes ~1.5 h:
+wall time at 400 CPUs. db2_converter cost ~50 s/name. Pass 1 is ~seconds per
+parent: 500 parents per task, ~260 tasks, under an hour. `llb names` over the
+union is one job (srun, a few minutes). Pass 2 carries the cost. Pick its
+`--per-shard` (names per task) so a task takes ~1.5 h:
 
 ```
-per_shard ≈ 5400 / (names_per_parent × seconds_per_name)      # e.g. 5400/(2×30) = 90
+per_shard ≈ 5400 / seconds_per_name      # e.g. 5400/30 = 180 names -> ~1,450 tasks for 260k names
 ```
 
-At 90 per shard there are ~1,450 tasks: under MaxSubmit 5,000, under
-MaxArraySize, and in one submit. Run them `--parallel 400`, which leaves room
-inside maom_root's 2,000-CPU cap. Set the time limit to 3× the smoke p90 task
-time. Copy the run to Turbo when done (scratch purges after 60 days).
+That is under MaxSubmit 5,000 and MaxArraySize, so it fits in one submit. Run it
+with `--parallel 400`, which leaves room inside maom_root's 2,000-CPU cap. Set
+the time limit to 3× the smoke run's slowest pass-2 task. Copy the run to Turbo
+when done (scratch purges after 60 days).
 
 **Docking cost.** The settings (§6) match LLB's conformer budget (600) and pH
 window, so the H18–22 pilot's 1.28 s per ligand-pocket is the right first guess;

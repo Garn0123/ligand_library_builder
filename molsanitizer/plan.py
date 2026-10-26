@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """
-plan.py -- `SMILES NAME` files -> a MolSanitizer build run directory.
+plan.py -- `SMILES NAME` files -> a MolSanitizer build run directory (pass 1's shards).
+
+The build runs in two MolSanitizer passes with LLB's naming step between them
+(UPSTREAM.md section 2): pass 1 (chemistry, SMILES out) -> `llb names` over the
+whole library -> pass 2 (3D + db2 on contract names). This plans pass 1;
+`msani.sh names` plans pass 2 from what naming returns.
 
 Writes, into RUN (refuses a RUN that already holds a different plan):
 
@@ -9,8 +14,8 @@ Writes, into RUN (refuses a RUN that already holds a different plan):
   msani_configurations.yaml  MolSanitizer's defaults file for this run
                            (tasks export MSANI_CONFIG to it, so a personal
                            ~/.config/msani file cannot change a build)
-  shards/NNNNN.tsv         gidx, smiles, input_name, parent_id   (no header)
-  shards.tsv               shard, n, first_gidx, last_gidx, sha256
+  pass1/shards/NNNNN.tsv   gidx, smiles, input_name, parent_id   (no header)
+  pass1/shards.tsv         shard, n, first_gidx, last_gidx, sha256
   plan_rejected.tsv        input lines that never reach a shard, with the reason
                            (unparsable line, damaged ZINC id, repeated parent id)
 
@@ -19,7 +24,7 @@ collect.py can show that each one ends up built or failed-with-reason.
 
 stdlib only (runs on a login node with any python3 >= 3.8).
 
-    python3 plan.py samples/H18.smi samples/H19.smi ... -o RUN --per-shard 40
+    python3 plan.py samples/H18.smi samples/H19.smi ... -o RUN --per-shard 500
 """
 from __future__ import annotations
 
@@ -34,8 +39,8 @@ import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
-from naming import parent_id  # noqa: E402
+sys.path.insert(0, str(HERE.parent / "naming"))
+from llb_ids import parent_id  # noqa: E402   the one definition (naming/llb_ids.py)
 
 # The chemistry. MolSanitizer 0.7.4's defaults except where noted; pH window,
 # conformer count and stereo cap chosen by John 2026-10-26. Every value lands
@@ -107,7 +112,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("inputs", nargs="+", type=Path, help="`SMILES NAME` files (.smi or .smi.gz)")
     ap.add_argument("-o", "--run", type=Path, required=True)
-    ap.add_argument("--per-shard", type=int, default=40, help="parents per array task")
+    ap.add_argument("--per-shard", type=int, default=500, help="parents per pass-1 array task")
     ap.add_argument("--label", default="", help="free text kept in run.json")
     for k, v in DEFAULTS.items():
         flag = "--" + k.replace("_", "-")
@@ -158,15 +163,15 @@ def main(argv=None) -> int:
                 gidx += 1
         inp["n_lines"] = gidx - inp["first_gidx"]
 
-    (run / "shards").mkdir(parents=True, exist_ok=True)
+    (run / "pass1" / "shards").mkdir(parents=True, exist_ok=True)
     shard_rows = []
     for k in range(0, len(rows), args.per_shard):
         chunk = rows[k:k + args.per_shard]
         idx = len(shard_rows) + 1                       # SLURM array index, 1-based
-        path = run / "shards" / f"{idx:05d}.tsv"
+        path = run / "pass1" / "shards" / f"{idx:05d}.tsv"
         path.write_text("".join("\t".join(map(str, r)) + "\n" for r in chunk))
         shard_rows.append((idx, len(chunk), chunk[0][0], chunk[-1][0], sha256(path)))
-    with open(run / "shards.tsv", "w") as fh:
+    with open(run / "pass1" / "shards.tsv", "w") as fh:
         fh.write("shard\tn\tfirst_gidx\tlast_gidx\tsha256\n")
         fh.writelines("\t".join(map(str, r)) + "\n" for r in shard_rows)
     with open(run / "plan_rejected.tsv", "w") as fh:

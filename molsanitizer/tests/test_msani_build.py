@@ -3,9 +3,10 @@
     pytest molsanitizer/tests                 # from the repo root
     python molsanitizer/tests/test_msani_build.py   # same tests, no pytest needed
 
-naming/plan/collect need only the standard library. The end-to-end tests run
-build_shard.py against tests/fake_msani (a canned stand-in for msani 0.7.4's
-Python API and CLI) and need RDKit + pandas; they skip without them.
+plan/collect need only the standard library. The end-to-end tests run pass 1,
+the REAL naming/assign_names.py, and pass 2 against tests/fake_msani (a canned
+stand-in for msani 0.7.4's Python API and CLI); they need RDKit + pandas and skip
+without them. naming/ has its own tests (tests/test_names.py).
 """
 from __future__ import annotations
 
@@ -22,7 +23,8 @@ REPO = MSB.parent
 FAKE = HERE / "fake_msani"
 sys.path.insert(0, str(MSB))
 
-import naming  # noqa: E402
+sys.path.insert(0, str(REPO / "naming"))
+CONTRACT = __import__("re").compile(r"^C[0-9A-Za-z]{14}C$")
 
 
 def have_rdkit() -> bool:
@@ -46,53 +48,6 @@ class _Skip(Exception):
     pass
 
 
-# ---- naming ----------------------------------------------------------------------
-
-def test_contract_names():
-    assert naming.contract_name("h10000007sNS", 0, 0) == "Ch10000007sNS00C"
-    assert naming.contract_name("h10000007sNS", 10, 61) == "Ch10000007sNSAzC"
-    for bad in ((62, 0), (0, 62), (-1, 0)):
-        try:
-            naming.contract_name("h10000007sNS", *bad)
-        except ValueError:
-            continue
-        raise AssertionError(f"{bad} accepted")
-
-
-def test_parse_state_id():
-    p = "ZINCh10000007sNS"
-    assert naming.parse_state_id(p, p) == (0, 0)
-    assert naming.parse_state_id(p, p + "_2") == (2, 0)
-    assert naming.parse_state_id(p, p + ".3") == (0, 3)
-    assert naming.parse_state_id(p, p + "_02.10") == (2, 10)        # zero-padded forms
-    assert naming.parse_state_id(p, "ZINCh10000007sNT_1") is None    # another parent
-    assert naming.parse_state_id(p, p + "_1_1") is None              # unknown format: stop
-
-
-def test_assign_indices_dense_per_state():
-    keys = [(1, 1), (1, 2), (2, 0), (3, 1), (3, 2), (3, 3)]
-    assert naming.assign_indices(keys) == [(0, 0), (0, 1), (1, 0), (2, 0), (2, 1), (2, 2)]
-    assert naming.assign_indices([(0, 0)]) == [(0, 0)]
-
-
-def test_parent_ids_match_llb_ids():
-    """naming.py copies run_qupkake/llb_ids.py; they must agree while both exist."""
-    src = REPO / "run_qupkake" / "llb_ids.py"
-    if not src.exists():
-        skip("run_qupkake/llb_ids.py is gone; naming.py is now the one definition")
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("llb_ids", src)
-    llb_ids = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(llb_ids)
-    names = ["ZINCh10000007sNS", "ZINC000012345678", "ZINC12345", "ZINC000012345678.0",
-             "ZINC", "", "CHEMBL25", "my benzoic acid", "edge_piperazine", "ZINCabc"]
-    for n in names:
-        assert naming.parent_id(n) == llb_ids.parent_id(n), n
-        pid = naming.parent_id(n)[0]
-        if pid:
-            assert naming.base_id_of(pid) == llb_ids.base_id_of(pid), n
-
-
 # ---- plan + collect (stdlib) ---------------------------------------------------------
 
 def plan(tmp: Path, lines: list[str], per_shard=2, extra=()) -> Path:
@@ -113,16 +68,16 @@ def test_plan_rejects_and_shards(tmp_path=None):
     assert meta["n_input_lines"] == 6 and meta["n_parents"] == 3 and meta["n_shards"] == 2
     rej = (run / "plan_rejected.tsv").read_text()
     assert "malformed_zinc_id" in rej and "duplicate_parent_id" in rej and "unparsable_line" in rej
-    shard1 = (run / "shards" / "00001.tsv").read_text().splitlines()
+    shard1 = (run / "pass1" / "shards" / "00001.tsv").read_text().splitlines()
     assert shard1[0].split("\t") == ["0", "CCO", "ZINCh10000007sNS", "ZINCh10000007sNS"]
-    assert (run / "shards" / "00002.tsv").read_text().split("\t")[3].strip() == "ZINC000000012345"
+    assert (run / "pass1" / "shards" / "00002.tsv").read_text().split("\t")[3].strip() == "ZINC000000012345"
     assert "PH: 7\n" in (run / "msani_configurations.yaml").read_text()
     # same plan again: no-op; different options: refused
     again = subprocess.run([sys.executable, str(MSB / "plan.py"), str(tmp / "H18.smi"), "-o", str(run),
                             "--per-shard", "2"], capture_output=True, text=True)
     assert again.returncode == 0 and "nothing to do" in again.stdout
     other = subprocess.run([sys.executable, str(MSB / "plan.py"), str(tmp / "H18.smi"), "-o", str(run),
-                            "--per-shard", "2", "--pH", "7"], capture_output=True, text=True)
+                            "--per-shard", "2", "--pH", "6"], capture_output=True, text=True)
     assert other.returncode != 0
 
 
@@ -141,9 +96,15 @@ def env_with_fake() -> dict:
     return env
 
 
-def build(run: Path, k: int, scratch: Path):
-    return subprocess.run([sys.executable, str(MSB / "build_shard.py"), "--run", str(run), "--shard", str(k),
-                           "--scratch", str(scratch)], capture_output=True, text=True, env=env_with_fake())
+def build(run: Path, npass: int, k: int, scratch: Path):
+    return subprocess.run([sys.executable, str(MSB / "build_shard.py"), "--run", str(run), "--pass", str(npass),
+                           "--shard", str(k), "--scratch", str(scratch)],
+                          capture_output=True, text=True, env=env_with_fake())
+
+
+def names_step(run: Path, per_shard: int):
+    return subprocess.run([sys.executable, str(MSB / "names_step.py"), str(run), "--per-shard", str(per_shard)],
+                          capture_output=True, text=True, env=env_with_fake())
 
 
 def collect(run: Path):
@@ -157,70 +118,83 @@ def read(path: Path) -> list[dict]:
         return list(csv.DictReader(fh, delimiter=delim))
 
 
+def run_all(run: Path, scratch: Path, per_shard2: int = 3):
+    n1 = json.loads((run / "run.json").read_text())["n_shards"]
+    for k in range(1, n1 + 1):
+        r = build(run, 1, k, scratch)
+        assert r.returncode == 0, r.stdout + r.stderr
+    r = names_step(run, per_shard2)
+    assert r.returncode == 0, r.stdout + r.stderr
+    n2 = json.loads((run / "pass2" / "plan.json").read_text())["n_shards"]
+    for k in range(1, n2 + 1):
+        r = build(run, 2, k, scratch)
+        assert r.returncode == 0, r.stdout + r.stderr
+    return n2
+
+
 def test_end_to_end(tmp_path=None):
     if not have_rdkit():
         skip("needs RDKit + pandas")
     tmp = Path(tmp_path or tempfile.mkdtemp())
-    lines = ["CCN(C)Cc1ccccc1 ZINCh10000007sNS",       # invertomer pair
+    lines = ["CCN(C)Cc1ccccc1 ZINCh10000007sNS",       # N-H+ invertomer pair
              "OC(=O)c1ccc(O)cc1 acid_parent",          # two states, hashed name
-             "CC(N)C(=O)O ZINCh10000008aaa",           # 3 names: state 0 has 2 isomers
+             "CC(N)C(=O)O ZINCh10000008aaa",           # 2 closed isomers + 1 state not stereo-closed
              "BrCCO ZINCh10000009bbb",                 # 3D failure recorded by msani
-             "CC(=O)[O-].[Na+] ZINCh1000000Asal",      # removed in 2D
+             "CC(=O)[O-].[Na+] ZINCh1000000Asal",      # removed in pass 1
              "C[Se]C ZINCh1000000Bsel",                # exotic for db2
-             "ClCCO ZINCh1000000Ccll",                  # AMSOL charge mismatch
-             "C(=O)(O)c1ccc(O)cc1 dup_parent",         # uncanned: one state, built
+             "ClCCO ZINCh1000000Ccll",                 # AMSOL charge mismatch
+             "C(=O)(O)c1ccc(O)cc1 dup_parent",         # same structure as acid_parent's neutral state
              "CCCI ZINCh1000000Diod",                  # msani process dies; retried alone
              "C1CC1C(=O)O(C ZINCh1000000Ebad",         # invalid SMILES
-             "OC(=O)c1ccc(O)cc1 acid_again",           # same structures as acid_parent
+             "OC(=O)c1ccc(O)cc1 acid_again",           # every state another parent's
+             "CCO ZINC000012345678.0",                 # damaged ZINC id: plan-rejected
              ]
     run = plan(tmp, lines, per_shard=4)
     scratch = tmp / "scratch"
     scratch.mkdir()
-    for k in (1, 2):
-        r = build(run, k, scratch)
-        assert r.returncode == 0, r.stdout + r.stderr
-    r = collect(run)
-    assert r.returncode == 1 and "not done: 3" in r.stderr            # shard 3 missing
-    r = build(run, 3, scratch)
-    assert r.returncode == 0, r.stdout + r.stderr
+    assert build(run, 1, 1, scratch).returncode == 0
+    r = names_step(run, 3)
+    assert r.returncode != 0 and "pass 1 not finished" in (r.stdout + r.stderr)
+    assert collect(run).returncode == 1
+    run_all(run, scratch)
     r = collect(run)
     assert r.returncode == 0, r.stdout + r.stderr
 
     ledger = {row["input_name"]: row for row in read(run / "parents_ledger.tsv")}
     assert len(ledger) == len(lines)
     assert ledger["ZINCh10000007sNS"]["status"] == "built"
-    assert ledger["ZINCh10000009bbb"]["status"] == "failed" and "canned failure" in ledger["ZINCh10000009bbb"]["reason"]
-    assert "removed_in_2d" in ledger["ZINCh1000000Asal"]["reason"]
-    assert ledger["ZINCh1000000Ebad"]["reason"] == "invalid_smiles"
+    assert "canned failure" in ledger["ZINCh10000009bbb"]["reason"]
+    assert ledger["ZINCh1000000Asal"]["reason"].startswith("pass1: removed_in_pass1")
+    assert ledger["ZINCh1000000Ebad"]["reason"] == "pass1: invalid_smiles"
     assert "CHARGE_MISMATCH" in ledger["ZINCh1000000Ccll"]["reason"]
     assert "EXOTIC" in ledger["ZINCh1000000Bsel"]["reason"]
     assert "msani exit 139" in ledger["ZINCh1000000Diod"]["reason"]
-    assert ledger["acid_again"]["status"] == "failed" and "DUPLICATE" in ledger["acid_again"]["reason"]
+    assert ledger["acid_again"]["status"] == "failed" and "duplicate_structure" in ledger["acid_again"]["reason"]
+    assert ledger["ZINC000012345678.0"]["reason"] == "plan: malformed_zinc_id"
+    for n in ("dup_parent", "acid_parent", "ZINCh10000008aaa"):
+        assert ledger[n]["status"] == "built", ledger[n]
 
     lib = {row["name"]: row for row in read(run / "library" / "library.tsv")}
-    assert all(naming.CONTRACT.match(n) for n in lib)
-    amine = sorted(n for n, row in lib.items() if row["parent_id"] == "ZINCh10000007sNS")
-    assert amine == ["Ch10000007sNS00C", "Ch10000007sNS01C"]
+    assert all(CONTRACT.match(n) for n in lib)
+    assert sorted(n for n, row in lib.items() if row["parent_id"] == "ZINCh10000007sNS") == \
+        ["Ch10000007sNS00C", "Ch10000007sNS01C"]
     assert lib["Ch10000007sNS01C"]["invertomer_of"] == "Ch10000007sNS00C"
-    assert lib["Ch10000007sNS00C"]["invertomer_of"] == ""
-    ala = sorted((row["protomer_index"], row["stereo_index"]) for row in lib.values()
-                 if row["parent_id"] == "ZINCh10000008aaa")
-    assert ala == [("0", "0"), ("0", "1"), ("1", "0")]
-    assert lib["Ch10000008aaa00C"]["net_charge"] == "0" and lib["Ch10000008aaa10C"]["net_charge"] == "0"
-    acid = [row for row in lib.values() if row["input_name"] == "acid_parent"]
-    assert {row["net_charge"] for row in acid} == {"-1", "0"} and acid[0]["base_id"].startswith("Z")
+    assert lib["Ch10000007sNS00C"]["ms_name"] == "ZINCh10000007sNS.1"
+    assert lib["Ch10000007sNS00C"]["ph_values"] == "7.4+-1"
+    ala = [row for row in lib.values() if row["parent_id"] == "ZINCh10000008aaa"]
+    assert sorted(r["stereo_index"] for r in ala) == ["0", "1"]          # the open state was dropped
+    assert "stereo_not_closed" in (run / "library" / "dropped.tsv").read_text()
 
     ver = {row["protomer_name"]: row for row in read(run / "db2_verification.csv")}
     assert set(ver) == set(lib)
     ok = [n for n, row in ver.items() if row["status"] == "OK"]
     for n in ok:
         assert (run / "db2_run" / "out" / ver[n]["db2_file"]).exists()
-    assert len(ok) == 2 + 2 + 3 + 1    # amine pair, acid states, alanine names, dup_parent
+    assert len(ok) == 2 + 1 + 2 + 1    # amine pair, acid anion, alanine isomers, dup_parent's neutral
 
     stats = json.loads((run / "collect.json").read_text())
     assert stats["input_lines"] == len(lines) and stats["n_h_invertomers"] == 1
-    prov = json.loads((run / "provenance.json").read_text())
-    assert prov["software"]["molsanitizer"] == "0.7.4-fake"
+    assert json.loads((run / "provenance.json").read_text())["software"]["molsanitizer"] == "0.7.4-fake"
 
 
 def test_resume_keeps_built_db2(tmp_path=None):
@@ -230,19 +204,18 @@ def test_resume_keeps_built_db2(tmp_path=None):
     run = plan(tmp, ["CC(N)C(=O)O ZINCh10000008aaa"], per_shard=5)
     scratch = tmp / "s"
     scratch.mkdir()
-    assert build(run, 1, scratch).returncode == 0
-    done = run / "tasks" / "00001" / "DONE.json"
-    r = build(run, 1, scratch)
-    assert "already done" in r.stdout
-    # an interrupted shard: DONE gone, db2s present -> kept, not rebuilt
-    done.unlink()
+    run_all(run, scratch, per_shard2=5)
+    done = run / "pass2" / "tasks" / "00001" / "DONE.json"
+    assert "already done" in build(run, 2, 1, scratch).stdout
+    done.unlink()                       # an interrupted shard: db2s present -> kept, not rebuilt
     gz = run / "db2_run" / "out" / "00001" / "Ch10000008aaa00C.db2.gz"
     before = gz.stat().st_mtime_ns
-    r = build(run, 1, scratch)
+    r = build(run, 2, 1, scratch)
     assert r.returncode == 0, r.stderr
     assert gz.stat().st_mtime_ns == before
-    states = read(run / "tasks" / "00001" / "states.tsv")
-    assert {s["detail"] for s in states} == {"kept from an earlier attempt"}
+    assert {s["detail"] for s in read(run / "pass2" / "tasks" / "00001" / "states.tsv")} == \
+        {"kept from an earlier attempt"}
+    assert collect(run).returncode == 0
 
 
 def test_check_db2_header_parsing(tmp_path=None):

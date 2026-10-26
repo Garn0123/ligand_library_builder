@@ -1,15 +1,21 @@
 #!/bin/bash
 # msani.sh -- MolSanitizer as LLB's ligand-construction step (`llb msani ...`).
 #
+# Two MolSanitizer passes with LLB's naming step between them (UPSTREAM.md section 2):
+#
 #   msani.sh install [PREFIX] [--from-lock]   create + freeze the env (environment/install.sh)
-#   msani.sh plan INPUT.smi... -o RUN [opts]  shard `SMILES NAME` files into RUN (plan.py -h)
-#   msani.sh submit RUN [--tasks all|missing|LIST] [--parallel N] [--time T] [--mem M] [-- sbatch args]
-#                                             one array task per shard; logs -> RUN/logs/
-#   msani.sh status RUN                       shards done / missing, as array ranges
-#   msani.sh collect RUN [--drap-dir DIR]     verify + merge -> db2_verification.csv, library/
-#   msani.sh shard RUN K                      run shard K here (inside an srun/salloc)
-#   msani.sh selftest [DIR]                   plan + build + collect probes/selftest.smi (srun it)
+#   msani.sh plan INPUT.smi... -o RUN [opts]  shard `SMILES NAME` files for pass 1 (plan.py -h)
+#   msani.sh submit RUN 1 [opts]              pass 1: chemistry, SMILES out (array; logs -> RUN/logs/)
+#   msani.sh names RUN [--per-shard N]        `llb names` over all of pass 1, then pass 2's shards
+#                                             (needs RDKit: runs in the msani env; srun it at scale)
+#   msani.sh submit RUN 2 [opts]              pass 2: 3D + db2 on contract names (array)
+#   msani.sh status RUN                       pass 1 / names / pass 2: done and missing, as array ranges
+#   msani.sh collect RUN [--drap-dir DIR]     verify + account -> db2_verification.csv, ledger
+#   msani.sh shard RUN PASS K                 run one shard here (inside an srun/salloc)
+#   msani.sh selftest [DIR]                   all of it on probes/selftest.smi, serially (srun it)
 #   msani.sh versions                         what the env holds
+#
+#   submit opts: [--tasks all|missing|LIST] [--parallel N] [--time T] [--mem M] [-- sbatch args]
 #
 # Settings (environment variables; defaults are Great Lakes, John's install):
 #   LLB_MSANI_PREFIX      the env       /nfs/turbo/umms-maom/johnbick/opt/molsanitizer/0.7.4
@@ -50,7 +56,8 @@ case "$step" in
     plan)     exec python3 "$MSB_DIR/plan.py" "$@" ;;
     status)   exec python3 "$MSB_DIR/collect.py" "$1" --status ;;
     collect)  exec python3 "$MSB_DIR/collect.py" "$@" ;;
-    shard)    activate; exec python "$MSB_DIR/build_shard.py" --run "$1" --shard "$2" ;;
+    shard)    activate; exec python "$MSB_DIR/build_shard.py" --run "$1" --pass "$2" --shard "$3" ;;
+    names)    activate; exec python "$MSB_DIR/names_step.py" "$@" ;;
     versions)
         activate
         msani --version 2>&1 | sed -n '/version/p'; obabel -V
@@ -61,12 +68,17 @@ case "$step" in
         [[ -e "$dir" ]] && { echo "msani.sh selftest: $dir exists" >&2; exit 1; }
         python3 "$MSB_DIR/plan.py" "$MSB_DIR/probes/selftest.smi" -o "$dir" --per-shard 100 --label selftest
         activate
-        python "$MSB_DIR/build_shard.py" --run "$dir" --shard 1
+        python "$MSB_DIR/build_shard.py" --run "$dir" --pass 1 --shard 1
+        python "$MSB_DIR/names_step.py" "$dir" --per-shard 100
+        python "$MSB_DIR/build_shard.py" --run "$dir" --pass 2 --shard 1
         python3 "$MSB_DIR/collect.py" "$dir"
         echo; echo "selftest run kept in $dir"
         ;;
     submit)
-        run="$(cd "${1:?msani.sh submit RUN ...}" && pwd)"; shift
+        run="$(cd "${1:?msani.sh submit RUN 1|2 ...}" && pwd)"; npass="${2:?msani.sh submit RUN 1|2 ...}"; shift 2
+        [[ "$npass" == 1 || "$npass" == 2 ]] || { echo "msani.sh submit: pass is 1 or 2, not '$npass'" >&2; exit 64; }
+        [[ "$npass" == 1 || -f "$run/pass2/plan.json" ]] || {
+            echo "msani.sh submit: pass 2 has no shards yet; run msani.sh names $run first" >&2; exit 1; }
         tasks=all; time=""; mem=""; extra=()
         while [[ $# -gt 0 ]]; do
             case "$1" in
@@ -80,11 +92,12 @@ case "$step" in
         done
         [[ -f "$run/run.json" ]] || { echo "msani.sh submit: $run has no run.json (msani.sh plan)" >&2; exit 1; }
         # -> "OFFSET ARRAYSPEC COUNT"
-        read -r offset spec count < <(PYTHONPATH="$MSB_DIR" python3 - "$run" "$tasks" "$MAX_ARRAY_INDEX" <<'EOF'
+        read -r offset spec count < <(PYTHONPATH="$MSB_DIR" python3 - "$run" "$tasks" "$MAX_ARRAY_INDEX" "$npass" <<'EOF'
 import json, sys
 from pathlib import Path
-run, tasks, max_ix = Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
-n = json.loads((run / "run.json").read_text())["n_shards"]
+run, tasks, max_ix, npass = Path(sys.argv[1]), sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
+n = (json.loads((run / "run.json").read_text())["n_shards"] if npass == 1
+     else json.loads((run / "pass2" / "plan.json").read_text())["n_shards"])
 def expand(spec):
     out = []
     for part in spec.split(","):
@@ -95,7 +108,7 @@ if tasks == "all":
     want = list(range(1, n + 1))
 elif tasks == "missing":
     from collect import shard_status
-    want = shard_status(run)[2]
+    want = shard_status(run, npass)[2]
 else:
     want = expand(tasks)
 bad = [k for k in want if not 1 <= k <= n]
@@ -117,13 +130,13 @@ EOF
                  "and other jobs count too); submit with --tasks in pieces" >&2; exit 1; }
         mkdir -p "$run/logs"
         args=(--account="$ACCOUNT" --partition="$PARTITION" --array="${spec}%${PARALLEL}"
-              --output="$run/logs/msani_%A_%a.out")
+              --job-name="msani$npass" --output="$run/logs/msani${npass}_%A_%a.out")
         [[ -n "$time" ]] && args+=(--time="$time")
         [[ -n "$mem" ]] && args+=(--mem="$mem")
         jid=$(sbatch --parsable "${args[@]}" "${extra[@]}" "$MSB_DIR/slurm/build.sbatch" \
-              "$run" "$offset" "$MSB_DIR" "$PREFIX" "$(conda_base)")
-        printf '%s\t%s\t%s\t%s\t%s\n' "$(date +%Y-%m-%dT%H:%M:%S%z)" "$jid" "$offset" "$spec" "$count" >> "$run/submissions.tsv"
-        echo "submitted $jid: $count task(s) (shard = array index + $offset; array $spec), $PARALLEL at once; logs in $run/logs/"
+              "$run" "$npass" "$offset" "$MSB_DIR" "$PREFIX" "$(conda_base)")
+        printf '%s\tpass%s\t%s\t%s\t%s\t%s\n' "$(date +%Y-%m-%dT%H:%M:%S%z)" "$npass" "$jid" "$offset" "$spec" "$count" >> "$run/submissions.tsv"
+        echo "submitted pass $npass as $jid: $count task(s) (shard = array index + $offset; array $spec), $PARALLEL at once; logs in $run/logs/"
         ;;
     help|-h|--help) usage ;;
     *) echo "msani.sh: unknown step '$step'" >&2; usage >&2; exit 64 ;;
