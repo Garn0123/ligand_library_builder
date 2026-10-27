@@ -59,6 +59,7 @@ PARENT_COLS = ["gidx", "input_name", "parent_id", "input_smiles", "status", "rea
                "n_rows", "seconds_2d"]
 STATE_COLS = ["name", "net_charge", "status", "detail", "db2_records", "amsol_charge",
               "db2_bytes", "smiles"]
+BATCH = int(os.environ.get("LLB_MSANI_BATCH", "20"))   # names per msani call in pass 2
 TIMING_COLS = ["name", "how", "seconds_wall", "embedding", "amsol", "sampling",
                "db2_conversion", "msani_total"]
 
@@ -312,11 +313,18 @@ def pass2(states, opts, scratch: Path, outdir: Path, taskdir: Path) -> dict:
                          detail=f"msani exit {rc}, no db2 and no error recorded" if rc != 0
                          else "no db2 and no error recorded (see msani.stdout)")
 
-    if todo:
-        # one call for the shard; a generous ceiling, the per-molecule retry is the real guard
-        rc, wall = run_msani(todo, opts, scratch / "batch", timeout=opts["mol_timeout"] * len(todo))
-        harvest(scratch / "batch", todo, "batch", rc, wall)
-        keep_log(scratch / "batch", taskdir, "batch")
+    # msani in chunks of BATCH names: each chunk's db2s are checked and kept as soon as
+    # it returns, so a task killed at its time limit keeps everything but the last chunk
+    # (one call for the whole shard lost 4 h of work per task on 2026-10-26)
+    t0 = time.perf_counter()
+    for i in range(0, len(todo), BATCH):
+        chunk = todo[i:i + BATCH]
+        rc, wall = run_msani(chunk, opts, scratch / "batch", timeout=opts["mol_timeout"] * len(chunk))
+        harvest(scratch / "batch", chunk, "batch", rc, wall)
+        keep_log(scratch / "batch", taskdir, f"batch{i // BATCH:03d}")
+        done = i + len(chunk)
+        print(f"  {done}/{len(todo)} names, {sum(s['status'] == 'OK' for s in todo[:done])} OK, "
+              f"{time.perf_counter() - t0:.0f} s (this chunk {wall:.0f} s)", flush=True)
     for s in [s for s in todo if s["status"] == "pending"]:
         rc, wall = run_msani([s], opts, scratch / "alone", timeout=opts["mol_timeout"])
         harvest(scratch / "alone", [s], "alone", rc, wall)
