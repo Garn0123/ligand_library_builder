@@ -2,7 +2,8 @@
 
 Only the surface build_shard.py touches: msani.api.Msani(...).run(df),
 msani.filtering.filters.Filters.remove_exotic_chem_to_db2(df), msani.__version__,
-and the `msani` CLI (bin/msani) for the 3D step. The chemistry is canned (see
+and the in-process 3D step molsanitizer/msani3d.py drives:
+msani.io.parsers, msani.io.loggers, msani.conformers.conformers.gen_conf_chunk. The chemistry is canned (see
 api.py); the id suffixes and the db2 header lines follow the real 0.7.4 formats
 (api.expand_ids, stereoisomers.py, db2/layout.serialize_db2).
 """

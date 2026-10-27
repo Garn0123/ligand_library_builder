@@ -13,6 +13,8 @@
 #   msani.sh collect RUN [--drap-dir DIR]     verify + account -> db2_verification.csv, ledger
 #   msani.sh shard RUN PASS K                 run one shard here (inside an srun/salloc)
 #   msani.sh selftest [DIR]                   all of it on probes/selftest.smi, serially (srun it)
+#   msani.sh abtest RUN [K] [N]               time N names of pass-2 shard K (default 1, 40) with and
+#                                             without the forkserver preload (srun it; writes nothing in RUN)
 #   msani.sh versions                         what the env holds
 #
 #   submit opts: [--tasks all|missing|LIST] [--parallel N] [--time T] [--mem M] [-- sbatch args]
@@ -69,6 +71,25 @@ case "$step" in
         activate
         msani --version 2>&1 | sed -n '/version/p'; obabel -V
         [[ -f "$PREFIX/LOCK/versions.txt" ]] && { echo "--- $PREFIX/LOCK/versions.txt"; cat "$PREFIX/LOCK/versions.txt"; }
+        ;;
+    abtest)
+        run="$(cd "${1:?msani.sh abtest RUN [SHARD] [N]}" && pwd)"; k="${2:-1}"; n="${3:-40}"
+        activate
+        base="${TMPDIR:-/tmp}/msani_abtest_$$"; mkdir -p "$base"
+        head -n "$n" "$run/pass2/shards/$(printf %05d "$k").smi" > "$base/todo.smi"
+        export MSANI_CONFIG="$run/msani_configurations.yaml" OMP_NUM_THREADS=1
+        read -r -a flags < <(PYTHONPATH="$MSB_DIR" python -c \
+            "import json, build_shard as b; print(' '.join(b.msani_flags(json.load(open('$run/run.json'))['options'])))")
+        for mode in preload no-preload; do
+            mkdir -p "$base/$mode"; cp "$base/todo.smi" "$base/$mode/"
+            extra=(); [[ $mode == no-preload ]] && extra=(--no-preload)
+            t0=$(date +%s)
+            ( cd "$base/$mode" && python "$MSB_DIR/msani3d.py" --todo todo.smi --chunk "$n" "${extra[@]}" \
+                -- "${flags[@]}" > out.txt 2> err.txt ) || echo "($mode exited non-zero; see $base/$mode/err.txt)"
+            echo "$mode: $(( $(date +%s) - t0 )) s wall for $n names"
+            python "$MSB_DIR/timing_summary.py" "$base/$mode/msani_timing.csv"
+        done
+        echo "kept in $base"
         ;;
     selftest)
         dir="${1:-${TMPDIR:-/tmp}/msani_selftest_$$}"

@@ -171,30 +171,60 @@ def grep_reason(name: str, *files: Path) -> str:
 
 # ---- pass 2: 3D + db2 -------------------------------------------------------------
 
-def msani_cmd(todo: Path, opts: dict) -> list[str]:
-    exe = shutil.which("msani") or str(Path(sys.executable).parent / "msani")
-    return [exe, "-i", str(todo), "--prefix", "todo",
-            "--no-neutralize", "--no-stereoisomers", "--metal", "off",
+def msani_flags(opts: dict) -> list[str]:
+    """The 3D-only msani flags: no 2D step may change or rename a named state."""
+    return ["--prefix", "todo", "--no-neutralize", "--no-stereoisomers", "--metal", "off",
             "-3d", "-f", "db2", "--numconfs", str(opts["numconfs"]),
             "--energywindow", str(opts["energywindow"]), "--rmsd", str(opts["rmsd"]),
             "--nringconfs", str(opts["nringconfs"]), "--timeout", str(opts["embed_timeout"]),
             "--randomSeed", str(opts["random_seed"]), "-j", "1", "--timing"]
 
 
-def run_msani(states, opts, work: Path, timeout: float) -> tuple[int | str, float]:
+def run_msani3d(states, opts, work: Path, on_chunk, chunk: int) -> tuple[int | str, float]:
+    """msani3d.py on `states` in a fresh `work`; on_chunk(a, b) after each finished chunk.
+
+    Each chunk has a deadline of mol_timeout x its size; past it the process is killed
+    and "timeout" returned. Returns (exit code or "timeout", wall seconds).
+    """
+    import queue
+    import threading
     if work.exists():
         shutil.rmtree(work)
     work.mkdir(parents=True)
     todo = work / "todo.smi"
     todo.write_text("".join(f"{s['smiles']} {s['name']}\n" for s in states))
+    cmd = [sys.executable, str(Path(__file__).resolve().parent / "msani3d.py"),
+           "--todo", str(todo), "--chunk", str(chunk), "--", *msani_flags(opts)]
     t0 = time.perf_counter()
-    with open(work / "msani.stdout", "w") as log:
-        try:
-            r = subprocess.run(msani_cmd(todo, opts), cwd=work, stdout=log, stderr=subprocess.STDOUT,
-                               timeout=timeout)
-            rc: int | str = r.returncode
-        except subprocess.TimeoutExpired:
-            rc = "timeout"
+    log = open(work / "msani.stdout", "w")
+    proc = subprocess.Popen(cmd, cwd=work, stdout=subprocess.PIPE, stderr=log, text=True)
+    lines: "queue.Queue[str | None]" = queue.Queue()
+    threading.Thread(target=lambda: ([lines.put(l) for l in proc.stdout], lines.put(None)),
+                     daemon=True).start()
+    start, rc = 0, None
+    while start < len(states):
+        n = min(chunk, len(states) - start)
+        deadline = time.monotonic() + opts["mol_timeout"] * n
+        line = ""
+        while not line.startswith("CHUNK "):
+            try:
+                line = lines.get(timeout=max(0.0, deadline - time.monotonic()))
+            except queue.Empty:
+                proc.kill()
+                proc.wait()
+                rc = "timeout"
+                break
+            if line is None:
+                break
+            log.write(line)
+        if rc == "timeout" or line is None:
+            break
+        _, a, b, _ = line.split()
+        on_chunk(int(a), int(b))
+        start = int(b)
+    if rc is None:
+        rc = proc.wait()
+    log.close()
     return rc, time.perf_counter() - t0
 
 
@@ -293,6 +323,12 @@ def pass2(states, opts, scratch: Path, outdir: Path, taskdir: Path) -> dict:
                 gz.unlink()                                         # rebuild it
     todo = [s for s in states if s["status"] == "pending"]
 
+    def alone(s):
+        rc, wall = run_msani3d([s], opts, scratch / "alone", lambda a, b: None, 1)
+        harvest(scratch / "alone", [s], "alone", rc, wall)
+        if rc == "timeout":
+            s.update(status="BUILD_FAILED", detail=f"timeout after {opts['mol_timeout']} s alone")
+
     def harvest(work: Path, batch, how: str, rc, wall: float):
         errs, times = read_errors(work), read_timing(work)
         for s in batch:
@@ -313,23 +349,31 @@ def pass2(states, opts, scratch: Path, outdir: Path, taskdir: Path) -> dict:
                          detail=f"msani exit {rc}, no db2 and no error recorded" if rc != 0
                          else "no db2 and no error recorded (see msani.stdout)")
 
-    # msani in chunks of BATCH names: each chunk's db2s are checked and kept as soon as
-    # it returns, so a task killed at its time limit keeps everything but the last chunk
-    # (one call for the whole shard lost 4 h of work per task on 2026-10-26)
+    # One msani3d.py process for the shard (msani's conformer module preloaded into its
+    # forkserver once, not imported per molecule); each chunk of BATCH names is checked
+    # and kept as soon as it is reported, so a task killed at its time limit keeps all but
+    # the chunk in flight. If the process dies or a chunk overruns, that chunk's unbuilt
+    # names are retried alone and a new process takes the rest.
     t0 = time.perf_counter()
-    for i in range(0, len(todo), BATCH):
-        chunk = todo[i:i + BATCH]
-        rc, wall = run_msani(chunk, opts, scratch / "batch", timeout=opts["mol_timeout"] * len(chunk))
-        harvest(scratch / "batch", chunk, "batch", rc, wall)
-        keep_log(scratch / "batch", taskdir, f"batch{i // BATCH:03d}")
-        done = i + len(chunk)
-        print(f"  {done}/{len(todo)} names, {sum(s['status'] == 'OK' for s in todo[:done])} OK, "
-              f"{time.perf_counter() - t0:.0f} s (this chunk {wall:.0f} s)", flush=True)
+    rest = list(todo)
+    while rest:
+        def on_chunk(a, b, rest=rest):
+            harvest(scratch / "batch", rest[a:b], "batch", 0, 0.0)
+            ok = sum(s["status"] == "OK" for s in todo)
+            print(f"  {len(todo) - len(rest) + b}/{len(todo)} names done, {ok} OK, "
+                  f"{time.perf_counter() - t0:.0f} s", flush=True)
+        rc, _ = run_msani3d(rest, opts, scratch / "batch", on_chunk, BATCH)
+        keep_log(scratch / "batch", taskdir, "batch")
+        if rc == 0:
+            break
+        tried = [s for s in rest if s["name"] in timing]
+        in_flight = [s for s in rest if s["name"] not in timing][:BATCH]
+        print(f"  msani3d stopped ({rc}); retrying {len(in_flight)} name(s) alone", flush=True)
+        for s in in_flight:
+            alone(s)
+        rest = [s for s in rest if s not in tried and s not in in_flight]
     for s in [s for s in todo if s["status"] == "pending"]:
-        rc, wall = run_msani([s], opts, scratch / "alone", timeout=opts["mol_timeout"])
-        harvest(scratch / "alone", [s], "alone", rc, wall)
-        if rc == "timeout":
-            s.update(status="BUILD_FAILED", detail=f"timeout after {opts['mol_timeout']} s alone")
+        alone(s)
     return timing
 
 

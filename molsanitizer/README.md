@@ -102,7 +102,7 @@ llb msani collect RUN --drap-dir $DRAP_DIR      # verify + account + validate_na
 | --- | --- |
 | **pass 1** (`build_shard.py --pass 1`) | One parent at a time through MolSanitizer's Python API, which takes pH 7.4 (the CLI takes only integers). The parent goes in under its **input name**, so `llb names` can match the suffixes. MolSanitizer's rows go to `pass1/out/NNNNN_clean.smi`, and a parent that returns nothing gets a reason. |
 | **names** (`names_step.py`) | Refuses unless every pass-1 shard is done. Runs `naming/assign_names.py --inputs <the run's sample files> --ms pass1/out/*_clean.smi -o library --ph 7.4+-1`, then cuts `library/library.smi` into pass-2 shards. |
-| **pass 2** (`build_shard.py --pass 2`) | Marks db2-incompatible states (`EXOTIC`). Then runs one `msani … --no-neutralize --no-stereoisomers --metal off -3d -f db2 --timing` call per shard. Molecules that call leaves without a db2 or an error are retried **one at a time** under `mol_timeout`. **Every db2 is checked**: names on the M lines, AMSOL charge = formal charge ± 0.05, conformations > 0. It is then gzipped to `db2_run/out/NNNNN/<name>.db2.gz`. |
+| **pass 2** (`build_shard.py --pass 2`) | Marks db2-incompatible states (`EXOTIC`), then runs **one `msani3d.py` process per shard**. That process calls MolSanitizer's own `gen_conf_chunk` with the 3D-only flags (`--no-neutralize --no-stereoisomers --metal off -3d -f db2 --timing`), on chunks of 20 names (`LLB_MSANI_BATCH`). `msani.conformers.conformers` is preloaded into the forkserver, so msani's per-molecule embedding process does not re-import it and re-parse the torsion library from Turbo. Each chunk's db2s are **checked as soon as it finishes**: M-line names, AMSOL charge = formal charge ± 0.05, conformations > 0. They are then gzipped to `db2_run/out/NNNNN/<name>.db2.gz`, so a task killed at its time limit keeps all but the chunk in flight. If the process dies or a chunk overruns, that chunk's names are retried one at a time. |
 
 Each task writes `DONE.json` last, recording versions, host, CPU, SLURM ids,
 seconds and the input sha256. A shard with a matching `DONE.json` is skipped. An
@@ -160,6 +160,8 @@ The run passes when:
    `prepare.py` + `run_pairs.sbatch` from the library-docking README §1.
 
 Read off: s/parent (pass 1), s/name (pass 2), names/parent, `MaxRSS` (sacct), db2 size, and `n_h_invertomers`.
+
+**2026-10-26, production attempt 1.** One msani call per shard, 140 tasks at once on one 192-CPU node (lh2500): 280 of 343 pass-2 tasks hit the 4 h limit and lost all their work. The last 63 tasks ran 63 at a time and took 1.0–1.4 h for 500 H29–30 names (7–8 s/name, 87% of it inside msani's own timing). Fixes: incremental keep per chunk; the msani3d.py driver with the forkserver preload; `msani.sh abtest` measures the preload's effect.
 
 **Smoke result (Lighthouse, 2026-10-26; 54 lines, 3 per bin H18–H30 + edge cases).**
 All 54 lines are accounted for: 48 built, and the 6 failures are exactly the
