@@ -11,6 +11,8 @@
 #   msani.sh submit RUN 2 [opts]              pass 2: 3D + db2 on contract names (array)
 #   msani.sh status RUN                       pass 1 / names / pass 2: done and missing, as array ranges
 #   msani.sh collect RUN [--drap-dir DIR]     verify + account -> db2_verification.csv, ledger
+#   msani.sh pack RUN [--delete-loose] [opts] per-name db2.gz -> 1,000-name chunks + db2_index.tsv
+#                                             (pack.py -h; srun it: it reads every db2)
 #   msani.sh shard RUN PASS K                 run one shard here (inside an srun/salloc)
 #   msani.sh selftest [DIR]                   all of it on probes/selftest.smi, serially (srun it)
 #   msani.sh abtest RUN [K] [N]               time N names of pass-2 shard K (default 1, 40) with and
@@ -65,6 +67,7 @@ case "$step" in
     plan)     exec python3 "$MSB_DIR/plan.py" "$@" ;;
     status)   exec python3 "$MSB_DIR/collect.py" "$1" --status ;;
     collect)  exec python3 "$MSB_DIR/collect.py" "$@" ;;
+    pack)     exec python3 "$MSB_DIR/pack.py" "$@" ;;
     shard)    activate; exec python "$MSB_DIR/build_shard.py" --run "$1" --pass "$2" --shard "$3" ;;
     names)    activate; exec python "$MSB_DIR/names_step.py" "$@" ;;
     versions)

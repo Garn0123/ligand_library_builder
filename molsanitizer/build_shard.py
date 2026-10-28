@@ -404,6 +404,10 @@ def main(argv=None) -> int:
             print(f"pass {args.npass} shard {key}: already done ({d['counts']})")
             return 0
         done.unlink()
+    if args.npass == 2 and (run / "pack.json").exists() and \
+            json.loads((run / "pack.json").read_text()).get("loose_deleted"):
+        raise SystemExit(f"{run} is packed and its loose db2s deleted (pack.py); pass 2 would "
+                         "rebuild every name. Build into a new run instead.")
 
     os.environ["MSANI_CONFIG"] = str(run / "msani_configurations.yaml")
     for v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):

@@ -127,6 +127,19 @@ It writes:
 | `collect.json` | counts, fail reasons, attrition per input file, s/parent (pass 1), s/name (pass 2), CPU-h per pass, db2 bytes |
 | `provenance.json` | MolSanitizer / RDKit / Python / Open Babel versions, options, LLB commit (and whether the checkout was dirty), CPUs, SLURM jobs, time span |
 
+**Pack (after collect).** Pass 2 leaves one `.db2.gz` per name: 171k files for
+H18–30, millions as libraries grow. `msani.sh pack RUN` concatenates them byte for
+byte into `db2_packed/cNNNNN.db2.gz` (up to 1,000 names each, in name order, never
+splitting a parent, so invertomer groups stay in one chunk) and writes
+`db2_index.tsv` (name, parent, chunk, offset, length, sha256). Concatenated gzip
+members are one valid stream; dock6 and db2tool read them. Any name or sample comes
+back out as a standalone `.db2.gz` with `pack.py RUN --extract NAMES -o DIR`. Pack
+verifies every member (bytes, sha256, record names) and deletes the loose files only
+with `--delete-loose`, after that passes; pass 2 then refuses to run on that RUN.
+A docking batch must be whole chunks (dock6 reads whole files), so 1,000 names per
+chunk is also the smallest batch. `prepare.py` reads `db2_index.tsv` (rna_pipeline,
+library_docking).
+
 Tests: `pytest molsanitizer/tests` or `python molsanitizer/tests/test_msani_build.py`.
 They run the real `naming/assign_names.py` between the passes and fake only
 MolSanitizer (`tests/fake_msani`, which uses 0.7.4's formats). They need RDKit

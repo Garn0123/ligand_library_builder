@@ -196,6 +196,13 @@ def test_end_to_end(tmp_path=None):
     assert stats["input_lines"] == len(lines) and stats["n_h_invertomers"] == 1
     assert json.loads((run / "provenance.json").read_text())["software"]["molsanitizer"] == "0.7.4-fake"
 
+    r = pack(run, "--per-chunk", "2", "--delete-loose")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert {x["name"] for x in read(run / "db2_index.tsv")} == set(ok)
+    (run / "pass2" / "tasks" / "00001" / "DONE.json").unlink()
+    r = build(run, 2, 1, scratch)
+    assert r.returncode != 0 and "loose db2s deleted" in r.stderr
+
 
 def test_resume_keeps_built_db2(tmp_path=None):
     if not have_rdkit():
@@ -232,6 +239,72 @@ def test_check_db2_header_parsing(tmp_path=None):
     assert check_db2(f, "Ch10000007sNS01C", 1, 0.05)[0] == "RENAMED"
     f.write_text("")
     assert check_db2(f, "Ch10000007sNS00C", 1, 0.05)[0] == "EMPTY"
+
+
+def fake_db2(name: str, nrec: int = 2) -> bytes:
+    rec = ("M %16s %9s %3d %3d %6d %6d %6d %6d %6d %6d\n" % (name, "fake", 20, 21, 300, 40, 2, 7, 5, 0)
+           + "M %+9.4f %+10.3f %+10.3f %+10.3f %9.3f\n" % (0.0, -40.1, 2.0, -38.1, 310.0))
+    import gzip
+    return gzip.compress((rec * nrec).encode())
+
+
+def pack(run: Path, *args):
+    return subprocess.run([sys.executable, str(MSB / "pack.py"), str(run), *args], capture_output=True, text=True)
+
+
+def test_pack(tmp_path=None):
+    import gzip
+    tmp = Path(tmp_path or tempfile.mkdtemp())
+    run = tmp / "run"
+    # parents: A has 3 names, B 1, C 2 (one failed), D 1  -> OK names in order A A A B C D
+    names = [("Ch10000001aaa00C", "A", "OK"), ("Ch10000001aaa01C", "A", "OK"), ("Ch10000001aaa10C", "A", "OK"),
+             ("Ch10000002bbb00C", "B", "OK"), ("Ch10000003ccc00C", "C", "OK"),
+             ("Ch10000003ccc01C", "C", "BUILD_FAILED"), ("Ch10000004ddd00C", "D", "OK")]
+    rows = ["protomer_name,parent,expected_charge,status,detail,db2_file,db2_name,amsol_charge"]
+    for i, (n, p, st) in enumerate(names):
+        shard = f"{i // 3 + 1:05d}"
+        if st == "OK":
+            (run / "db2_run" / "out" / shard).mkdir(parents=True, exist_ok=True)
+            (run / "db2_run" / "out" / shard / f"{n}.db2.gz").write_bytes(fake_db2(n, 1 + i % 3))
+        rows.append(f"{n},{p},0,{st},,{shard + '/' + n + '.db2.gz' if st == 'OK' else ''},{n},0.0")
+    (run / "db2_verification.csv").write_text("\n".join(rows) + "\n")
+
+    r = pack(run, "--per-chunk", "2")
+    assert r.returncode == 0, r.stdout + r.stderr
+    index = read(run / "db2_index.tsv")
+    chunk_of = {x["name"]: x["chunk"] for x in index}
+    assert len(index) == 6 and "Ch10000003ccc01C" not in chunk_of
+    assert len({chunk_of[n] for n, p, _ in names if p == "A"}) == 1      # 3 > per_chunk, still one chunk
+    assert chunk_of["Ch10000002bbb00C"] == chunk_of["Ch10000003ccc00C"] != chunk_of["Ch10000001aaa00C"]
+    for x in index:                                                       # member == loose file, byte for byte
+        data = (run / "db2_packed" / x["chunk"]).read_bytes()[int(x["offset"]): int(x["offset"]) + int(x["length"])]
+        shard = next(row.split(",")[5] for row in rows[1:] if row.startswith(x["name"]))
+        assert data == (run / "db2_run" / "out" / shard).read_bytes()
+    with gzip.open(run / "db2_packed" / chunk_of["Ch10000001aaa00C"], "rt") as fh:   # one gzip stream
+        assert fh.read().count("Ch10000001aaa") == 1 + 2 + 3
+
+    mtime = (run / "db2_packed" / "c00001.db2.gz").stat().st_mtime_ns
+    assert pack(run, "--per-chunk", "2").returncode == 0                 # rerun keeps matching chunks
+    assert (run / "db2_packed" / "c00001.db2.gz").stat().st_mtime_ns == mtime
+    assert pack(run, "--per-chunk", "3").returncode != 0                 # different plan: refused
+
+    want = tmp / "want.txt"
+    want.write_text("Ch10000004ddd00C\nCh10000001aaa01C\n")
+    assert pack(run, "--extract", str(want), "-o", str(tmp / "x")).returncode == 0
+    assert (tmp / "x" / "Ch10000004ddd00C.db2.gz").read_bytes() == \
+        (run / "db2_run" / "out" / "00003" / "Ch10000004ddd00C.db2.gz").read_bytes()
+
+    c = run / "db2_packed" / "c00002.db2.gz"                             # corruption is caught
+    good = c.read_bytes()
+    c.write_bytes(good[:-1] + bytes([good[-1] ^ 1]))
+    assert pack(run, "--verify").returncode == 1
+    c.write_bytes(good)
+
+    r = pack(run, "--per-chunk", "2", "--delete-loose")
+    assert r.returncode == 0, r.stderr
+    assert not list((run / "db2_run" / "out").rglob("*.db2.gz"))
+    assert pack(run, "--verify").returncode == 0
+    assert pack(run, "--extract", str(want), "-o", str(tmp / "y")).returncode == 0
 
 
 if __name__ == "__main__":
